@@ -68,7 +68,7 @@ function TestRoom({ id }) {
           <input type="radio" name={'q' + i} required disabled={!!result} checked={answers[i] === j}
             onChange={() => setAnswers(a => { const b = [...a]; b[i] = j; return b; })} /> {o}
         </label>)}
-        {r && <p className={r.correct ? 'good' : 'bad'}>{r.correct ? '✓ Correct' : '✗ Incorrect'} — <span style={{ color: 'var(--fg)' }}>{r.explanation}</span></p>}
+        {r && <p className={r.correct ? 'good' : 'bad'}>{r.correct ? '✓ Correct' : '✗ Incorrect'} — <span style={{ color: 'var(--ink)' }}>{r.explanation}</span></p>}
       </fieldset>;
     })}
     {!result && <button>Submit answers</button>}

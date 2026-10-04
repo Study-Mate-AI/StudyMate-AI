@@ -14,11 +14,16 @@ RAG study assistant: upload notes → grounded chat with citations → AI quizze
    Open http://localhost:5173
 
 ## Payments (optional, test mode)
-1. In the Stripe dashboard, create two Payment Links: a one-time token pack and a monthly Pro subscription.
+1. In the Stripe dashboard, create two Payment Links (a one-time token pack and a monthly Pro subscription). Set each one's after-payment redirect to `<your app>/wallet?paid=1`, and turn on the no-code Customer Portal.
 2. Put them in `client/.env`:
    ```
    VITE_STRIPE_PACK_LINK=https://buy.stripe.com/test_...
    VITE_STRIPE_PRO_LINK=https://buy.stripe.com/test_...
+   # Customer portal login link, so Pro users can cancel
+   VITE_STRIPE_PORTAL_LINK=https://billing.stripe.com/p/login/test_...
+   # Escape the $ (Vite expands $NAME in .env files)
+   VITE_PACK_PRICE=\$5
+   VITE_PRO_PRICE=\$9
    ```
 3. Forward webhooks: `stripe listen --forward-to localhost:3000/webhook`, then put the `whsec_...` it prints into `server/.env`.
 4. Pay with test card 4242 4242 4242 4242.

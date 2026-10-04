@@ -72,12 +72,16 @@ export function grade(questions, answers) {
   return { results, score: results.filter(r => r.correct).length };
 }
 
-// Deducts actual token usage, clamped at 0 in one atomic update. Embedding calls aren't charged
-// (the API returns no usage for them). ponytail: add a flat indexing fee if uploads get abused.
-export function charge(users, userId, tokens) {
-  return users.findOneAndUpdate(
+// Deducts actual token usage, clamped at 0 in one atomic update, and logs it to the wallet ledger.
+// Embedding calls aren't charged (the API returns no usage for them).
+// ponytail: add a flat indexing fee if uploads get abused.
+export async function charge(db, userId, tokens, kind) {
+  const before = await db.collection('users').findOneAndUpdate(
     { _id: userId },
     [{ $set: { credits: { $max: [0, { $subtract: ['$credits', tokens] }] } } }],
-    { returnDocument: 'after', projection: { credits: 1 } },
-  ).then(u => u?.credits ?? 0);
+    { returnDocument: 'before', projection: { credits: 1 } },
+  );
+  const spent = Math.min(before?.credits ?? 0, tokens);
+  if (spent) await db.collection('ledger').insertOne({ userId, kind, delta: -spent, at: new Date() });
+  return (before?.credits ?? 0) - spent;
 }

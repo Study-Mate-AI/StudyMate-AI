@@ -3,8 +3,8 @@ import Stripe from 'stripe';
 import { ObjectId } from 'mongodb';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_unset');
-const PACK = Number(process.env.PACK_CREDITS || 50000);
-const PRO = Number(process.env.PRO_CREDITS || 200000);
+export const PACK = Number(process.env.PACK_CREDITS || 50000);
+export const PRO = Number(process.env.PRO_CREDITS || 200000);
 
 // Credits only ever change here, from signed events. The frontend success redirect is ignored.
 export default function billing(db) {
@@ -21,15 +21,18 @@ export default function billing(db) {
     catch (e) { if (e.code === 11000) return res.json({ duplicate: true }); throw e; }
 
     const users = db.collection('users');
+    const grant = (userId, kind, delta) => db.collection('ledger').insertOne({ userId, kind, delta, at: new Date() });
     const o = ev.data.object;
     if (ev.type === 'checkout.session.completed' && ObjectId.isValid(o.client_reference_id)) {
-      const pro = o.mode === 'subscription';
-      await users.updateOne({ _id: new ObjectId(o.client_reference_id) }, {
+      const pro = o.mode === 'subscription', _id = new ObjectId(o.client_reference_id);
+      const r = await users.updateOne({ _id }, {
         $inc: { credits: pro ? PRO : PACK },
         $set: { stripeCustomerId: o.customer, ...(pro && { plan: 'pro' }) },
       });
+      if (r.matchedCount) await grant(_id, pro ? 'pro' : 'pack', pro ? PRO : PACK);
     } else if (ev.type === 'invoice.paid' && o.billing_reason === 'subscription_cycle') {
-      await users.updateOne({ stripeCustomerId: o.customer }, { $inc: { credits: PRO }, $set: { plan: 'pro' } });
+      const u = await users.findOneAndUpdate({ stripeCustomerId: o.customer }, { $inc: { credits: PRO }, $set: { plan: 'pro' } });
+      if (u) await grant(u._id, 'renewal', PRO);
     } else if (ev.type === 'customer.subscription.deleted') {
       await users.updateOne({ stripeCustomerId: o.customer }, { $set: { plan: 'free' } });
     }

@@ -3,17 +3,12 @@ import { Link } from 'react-router-dom';
 import { api } from '../App.jsx';
 
 const pct = x => Math.round(x * 100) + '%';
-// Stripe Payment Links (test mode); client_reference_id lets the webhook find the user.
-const PACK = import.meta.env.VITE_STRIPE_PACK_LINK;
-const PRO = import.meta.env.VITE_STRIPE_PRO_LINK;
 
-export default function Dashboard({ user }) {
+export default function Dashboard() {
   const [stats, setStats] = useState(null);
   useEffect(() => { api('/stats').then(setStats); }, []);
   if (!stats) return <p className="muted">Loading…</p>;
   const weak = stats.topics.filter(t => t.weak);
-  const link = (base, label) => base && <a href={`${base}?client_reference_id=${user.id}&prefilled_email=${encodeURIComponent(user.email)}`}
-    style={{ background: 'var(--accent)', color: 'var(--bg)', padding: '8px 12px', borderRadius: 8, fontWeight: 600, textDecoration: 'none' }}>{label}</a>;
 
   return <>
     <h2>Progress</h2>
@@ -39,13 +34,6 @@ export default function Dashboard({ user }) {
         </tr>)}</tbody>
       </table>
     </div>}
-
-    <div className="card">
-      <h3 style={{ marginTop: 0 }}>Tokens</h3>
-      <p>{user.credits.toLocaleString()} left · plan: {user.plan}</p>
-      <div style={{ display: 'flex', gap: 8 }}>{link(PACK, 'Buy token pack')}{user.plan !== 'pro' && link(PRO, 'Upgrade to Pro')}</div>
-      {!PACK && !PRO && <p className="muted">Set VITE_STRIPE_PACK_LINK / VITE_STRIPE_PRO_LINK in client/.env to enable payments.</p>}
-    </div>
   </>;
 }
 

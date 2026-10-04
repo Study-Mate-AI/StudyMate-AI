@@ -9,7 +9,7 @@ import jwt from 'jsonwebtoken';
 import { MongoClient, ObjectId } from 'mongodb';
 import pdf from 'pdf-parse/lib/pdf-parse.js'; // lib path: the package root runs a debug test under ESM
 import { chunk, embed, generate, grade, charge, quizSchema, DIMS } from './ai.js';
-import billing from './billing.js';
+import billing, { PACK, PRO } from './billing.js';
 
 const { MONGODB_URI, JWT_SECRET, PORT = 3000 } = process.env;
 if (!MONGODB_URI || !JWT_SECRET) throw new Error('Set MONGODB_URI and JWT_SECRET in server/.env');
@@ -19,8 +19,10 @@ const users = db.collection('users');
 const chunks = db.collection('chunks');
 const convos = db.collection('conversations');
 const quizzes = db.collection('quizzes');
+const ledger = db.collection('ledger');
 
 await users.createIndex({ email: 1 }, { unique: true });
+await ledger.createIndex({ userId: 1, at: -1 });
 await convos.createIndex({ userId: 1, subject: 1 }, { unique: true });
 await chunks.createSearchIndex({
   name: 'vec', type: 'vectorSearch',
@@ -60,6 +62,7 @@ app.post('/api/signup', async (req, res) => {
   const u = { email, passwordHash: await bcrypt.hash(password, 12), credits: 10000, plan: 'free' };
   try { u._id = (await users.insertOne(u)).insertedId; }
   catch (e) { if (e.code === 11000) return bad(res, 'Email already registered', 409); throw e; }
+  await ledger.insertOne({ userId: u._id, kind: 'signup', delta: u.credits, at: new Date() });
   login(res, u);
 });
 
@@ -75,6 +78,24 @@ app.post('/api/logout', (req, res) => res.clearCookie('token').json({ ok: true }
 app.get('/api/me', auth, async (req, res) => {
   const u = await users.findOne({ _id: req.uid }, { projection: { email: 1, credits: 1, plan: 1 } });
   u ? res.json({ id: u._id, email: u.email, credits: u.credits, plan: u.plan }) : bad(res, 'Not logged in', 401);
+});
+
+// ---------- wallet ----------
+app.get('/api/wallet', auth, async (req, res) => {
+  const since = new Date(Date.now() - 30 * 864e5);
+  const [u, history, spent] = await Promise.all([
+    users.findOne({ _id: req.uid }, { projection: { credits: 1, plan: 1 } }),
+    ledger.find({ userId: req.uid }, { projection: { _id: 0, kind: 1, delta: 1, at: 1 } }).sort({ at: -1 }).limit(50).toArray(),
+    ledger.aggregate([
+      { $match: { userId: req.uid, delta: { $lt: 0 }, at: { $gte: since } } },
+      { $group: { _id: '$kind', tokens: { $sum: { $multiply: ['$delta', -1] } }, calls: { $sum: 1 } } },
+    ]).toArray(),
+  ]);
+  if (!u) return bad(res, 'Not logged in', 401);
+  res.json({
+    credits: u.credits, plan: u.plan, history, offers: { pack: PACK, pro: PRO },
+    spent30: Object.fromEntries(spent.map(s => [s._id, { tokens: s.tokens, calls: s.calls }])),
+  });
 });
 
 // ---------- notes ----------
@@ -142,7 +163,7 @@ QUESTION: ${question}`);
     { role: 'user', content: question, at },
     { role: 'assistant', content: text, sources, at },
   ] } } }, { upsert: true });
-  res.json({ answer: text, sources, credits: await charge(users, req.uid, tokens) });
+  res.json({ answer: text, sources, credits: await charge(db, req.uid, tokens, 'chat') });
 });
 
 // ---------- quizzes ----------
@@ -163,7 +184,7 @@ Each has exactly 4 options; "answer" is the 0-based index of the correct option;
 NOTES:
 ${sources.map(s => s.text).join('\n\n')}`, quizSchema);
   const questions = JSON.parse(text).filter(q => q.options?.length === 4 && q.answer >= 0 && q.answer < 4);
-  const credits = await charge(users, req.uid, tokens);
+  const credits = await charge(db, req.uid, tokens, 'quiz');
   if (!questions.length) return bad(res, 'Quiz generation failed, try again', 502);
   const quiz = { userId: req.uid, subject, topic, difficulty, questions, attempts: [], at: new Date() };
   quiz._id = (await quizzes.insertOne(quiz)).insertedId;
