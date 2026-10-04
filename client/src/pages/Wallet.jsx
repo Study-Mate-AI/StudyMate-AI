@@ -45,6 +45,7 @@ export default function Wallet({ user, setCredits }) {
   const chat = w.spent30.chat?.tokens ?? 0, quiz = w.spent30.quiz?.tokens ?? 0, used = chat + quiz;
   const pctLeft = w.credits + used ? w.credits / (w.credits + used) : 0;
   const low = w.credits < LOW;
+  const subscribed = w.plan === 'pro' || w.plan === 'past_due';
   const pay = kind => LINKS[kind] && `${LINKS[kind]}?client_reference_id=${user.id}&prefilled_email=${encodeURIComponent(user.email)}`;
 
   return <>
@@ -57,12 +58,20 @@ export default function Wallet({ user, setCredits }) {
       {confirming === 'slow' && <>Stripe is taking longer than usual. Your tokens will appear here as soon as the payment is confirmed.</>}
     </div>}
 
+    {w.plan === 'past_due' && <div role="alert" className="card rise" style={{ borderColor: 'var(--bad)', background: 'var(--warn-soft)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ flex: 1, minWidth: 220 }}>
+        <strong style={{ color: 'var(--bad)' }}>Your Pro payment failed.</strong> Monthly tokens are paused until it goes through.
+        Your current balance still works, and Stripe will retry the card automatically.
+      </span>
+      {LINKS.portal && <a className="btn" href={LINKS.portal}>Update payment method</a>}
+    </div>}
+
     <section className="card rise" style={{ padding: 28 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <span className="num" style={{ fontSize: 'clamp(44px, 9vw, 64px)', fontWeight: 500, lineHeight: 1 }}>{fmt(balance)}</span>
         <span className="muted">tokens available</span>
-        <span className="eyebrow" style={{ marginLeft: 'auto', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line-2)', color: w.plan === 'pro' ? 'var(--accent)' : undefined }}>
-          {w.plan === 'pro' ? 'Pro plan' : 'Free plan'}
+        <span className="eyebrow" style={{ marginLeft: 'auto', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line-2)', color: { pro: 'var(--accent)', past_due: 'var(--bad)' }[w.plan] }}>
+          {{ pro: 'Pro plan', past_due: 'Pro · payment failed' }[w.plan] || 'Free plan'}
         </span>
       </div>
 
@@ -87,15 +96,15 @@ export default function Wallet({ user, setCredits }) {
 
     <p className="eyebrow" style={{ marginTop: 40 }}>Recharge</p>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
-      <Plan title="Free" price="$0" note="to start" current={w.plan !== 'pro'}
+      <Plan title="Free" price="$0" note="to start" current={!subscribed}
         points={['10,000 tokens on signup', 'Every feature included', 'Top up anytime']} />
       <Plan title="Token pack" price={PRICE.pack} note="one-time"
         points={[`${fmt(w.offers.pack)} tokens`, 'Never expire', 'Stacks with any plan']}
         action={<Pay href={pay('pack')} label="Buy tokens" />} />
-      <Plan title="Pro" price={PRICE.pro} note="per month" featured current={w.plan === 'pro'}
+      <Plan title="Pro" price={PRICE.pro} note="per month" featured current={subscribed}
         points={[`${fmt(w.offers.pro)} tokens every month`, 'Unused tokens carry over', 'Cancel anytime']}
-        action={w.plan === 'pro'
-          ? LINKS.portal && <a className="btn ghost" href={LINKS.portal}>Manage subscription</a>
+        action={subscribed
+          ? LINKS.portal && <a className="btn ghost" href={LINKS.portal}>{w.plan === 'past_due' ? 'Update payment method' : 'Manage subscription'}</a>
           : <Pay href={pay('pro')} label="Upgrade to Pro" accent />} />
     </div>
     {!LINKS.pack && !LINKS.pro && <p className="muted" style={{ fontSize: 13 }}>Payments aren't configured: set VITE_STRIPE_PACK_LINK and VITE_STRIPE_PRO_LINK in client/.env.</p>}

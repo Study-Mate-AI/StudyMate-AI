@@ -46,5 +46,10 @@ Built from the project plan, with Ponytail keeping it minimal: 4 server files, 6
 
 ### Not done yet
 - **Never run against a real database or Stripe.** Needs a MongoDB Atlas URI, Gemini key and Stripe test keys in `.env`.
-- **Failed payment doesn't lock the account** (`invoice.payment_failed`). The user stays Pro until Stripe cancels the subscription.
 - **No automated test for `charge()`.** It needs a live database, so check it by hand.
+
+### Failed-payment handling (Module 9)
+- `invoice.payment_failed` on a subscription → `plan: 'past_due'`: monthly token refills stop. Tokens already paid for stay usable.
+- A later successful retry (`invoice.paid`) sets the plan back to `pro` and grants that month's tokens. If Stripe gives up, `customer.subscription.deleted` → `free`.
+- Wallet shows a "Your Pro payment failed" alert with an **Update payment method** button (Customer Portal), and the plan badge reads "Pro · payment failed".
+- Past-due users don't see "Upgrade to Pro", so they can't start a second subscription.

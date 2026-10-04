@@ -33,6 +33,10 @@ export default function billing(db) {
     } else if (ev.type === 'invoice.paid' && o.billing_reason === 'subscription_cycle') {
       const u = await users.findOneAndUpdate({ stripeCustomerId: o.customer }, { $inc: { credits: PRO }, $set: { plan: 'pro' } });
       if (u) await grant(u._id, 'renewal', PRO);
+    } else if (ev.type === 'invoice.payment_failed' && o.billing_reason?.startsWith('subscription')) {
+      // Lock Pro: no monthly refill until a retry succeeds (invoice.paid restores 'pro').
+      // Tokens already granted were paid for, so the balance stays usable.
+      await users.updateOne({ stripeCustomerId: o.customer, plan: 'pro' }, { $set: { plan: 'past_due' } });
     } else if (ev.type === 'customer.subscription.deleted') {
       await users.updateOne({ stripeCustomerId: o.customer }, { $set: { plan: 'free' } });
     }
