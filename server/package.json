@@ -16,6 +16,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.10.0",
     "multer": "^2.0.0",
+    "nodemailer": "^10.0.15",
     "pdf-parse": "1.1.1",
     "stripe": "^17.0.0"
   }

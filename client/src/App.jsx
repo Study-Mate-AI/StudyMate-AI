@@ -40,6 +40,25 @@ export function useTween(target, ms = 700) {
   return v;
 }
 
+// Overrides the system colour scheme; the choice is remembered (applied before paint in index.html).
+export function ThemeToggle({ style }) {
+  const [dark, setDark] = useState(() => (document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');
+  const flip = () => {
+    const t = dark ? 'light' : 'dark';
+    const apply = () => { document.documentElement.dataset.theme = t; setDark(!dark); };
+    document.startViewTransition ? document.startViewTransition(apply) : apply();
+    try { localStorage.theme = t; } catch {}
+  };
+  return <button type="button" className="ghost theme-toggle" onClick={flip} style={style}
+    aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Light mode' : 'Dark mode'}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      {dark
+        ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>
+        : <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z" />}
+    </svg>
+  </button>;
+}
+
 function CreditMeter({ credits }) {
   const shown = useTween(credits);
   const state = credits <= 0 ? 'var(--bad)' : credits < LOW ? 'var(--warn)' : 'var(--good)';
@@ -79,6 +98,7 @@ export default function App() {
       {tab('/notes', 'Notes')}{tab('/chat', 'Tutor')}{tab('/quiz', 'Quiz')}{tab('/dashboard', 'Progress')}{tab('/wallet', 'Wallet')}
       <span className="right">
         <CreditMeter credits={user.credits} />
+        <ThemeToggle />
         <button className="ghost" onClick={logout}>Log out</button>
       </span>
     </nav>

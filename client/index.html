@@ -8,27 +8,22 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
   <style>
+    /* light-dark(light, dark): follows the system unless the toggle sets data-theme on <html>. */
     :root {
-      --paper: #f6f4ef; --surface: #fffefb; --ink: #1a1a17; --ink-2: #57564f; --ink-3: #8e8c83;
-      --line: #e4e1d8; --line-2: #d3cfc3;
-      --accent: #1f5f4f; --accent-ink: #f6f4ef; --accent-soft: #e3eee9;
-      --warn: #a3580b; --warn-soft: #f8ecdc; --bad: #a83226; --good: #2b6e3f;
+      color-scheme: light dark;
+      --paper: light-dark(#f6f4ef, #121210); --surface: light-dark(#fffefb, #1a1a17);
+      --ink: light-dark(#1a1a17, #ecebe6); --ink-2: light-dark(#57564f, #b3b1a8); --ink-3: light-dark(#8e8c83, #7b7970);
+      --line: light-dark(#e4e1d8, #2a2925); --line-2: light-dark(#d3cfc3, #3a3833);
+      --accent: light-dark(#1f5f4f, #7fc4ad); --accent-ink: light-dark(#f6f4ef, #10201b); --accent-soft: light-dark(#e3eee9, #1d2b26);
+      --warn: light-dark(#a3580b, #e8a65c); --warn-soft: light-dark(#f8ecdc, #2d2216); --bad: light-dark(#a83226, #f08a7c); --good: light-dark(#2b6e3f, #8fd1a1);
       --sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
       --mono: 'Geist Mono', ui-monospace, monospace;
       --serif: 'Instrument Serif', Georgia, serif;
       --ease: cubic-bezier(.2, .7, .2, 1);
       --r: 10px;
-      color-scheme: light;
     }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --paper: #121210; --surface: #1a1a17; --ink: #ecebe6; --ink-2: #b3b1a8; --ink-3: #7b7970;
-        --line: #2a2925; --line-2: #3a3833;
-        --accent: #7fc4ad; --accent-ink: #10201b; --accent-soft: #1d2b26;
-        --warn: #e8a65c; --warn-soft: #2d2216; --bad: #f08a7c; --good: #8fd1a1;
-        color-scheme: dark;
-      }
-    }
+    :root[data-theme="light"] { color-scheme: light; }
+    :root[data-theme="dark"] { color-scheme: dark; }
     * { box-sizing: border-box; }
     html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
     body { margin: 0; font: 15px/1.55 var(--sans); background: var(--paper); color: var(--ink); font-feature-settings: 'ss01', 'cv11'; }
@@ -69,6 +64,25 @@
     th { font: 500 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); text-align: left; padding: 0 0 10px; }
     td { padding: 10px 0; border-top: 1px solid var(--line); }
 
+    /* Study-desk motifs: ruled paper, highlighter, subject tints (--h = hue per subject). */
+    :root { --hl: light-dark(#f3df72, #6b5a1c); --rule: light-dark(#dfe6ee, #24272b); --margin: light-dark(#e9b4ad, #4a2b28); }
+    .ruled { background: repeating-linear-gradient(to bottom, transparent 0 27px, var(--rule) 27px 28px), var(--surface); }
+    mark { background: linear-gradient(100deg, transparent 2%, var(--hl) 4% 96%, transparent 98%) 0 60% / 100% 70% no-repeat; color: inherit; padding: 0 2px; }
+    .tint { --c: light-dark(oklch(52% .1 var(--h, 150)), oklch(76% .09 var(--h, 150))); }
+    .theme-toggle { padding: 7px; background: transparent; color: var(--ink-2); border-color: var(--line-2); }
+    .theme-toggle:hover { color: var(--ink); background: var(--line); }
+    .theme-toggle svg { display: block; transition: rotate .4s var(--ease); }
+    .theme-toggle:active svg { rotate: 30deg; }
+    .field { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+    .field input, .field select { width: 100%; }
+    .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--line); }
+    .seg button { background: transparent; color: var(--ink-2); border: 0; padding: 6px 14px; border-radius: 7px; font-size: 14px; }
+    .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 0 0 1px var(--line-2); }
+    .chip { background: transparent; color: var(--ink-2); border: 1px solid var(--line-2); padding: 4px 11px; border-radius: 99px; font-size: 13px; font-weight: 500; gap: 7px; }
+    .chip:hover { background: var(--line); color: var(--ink); }
+    .chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
+
     /* Motion: entry via @starting-style, page swaps via the View Transitions API. */
     .rise { opacity: 1; transform: none; transition: opacity .5s var(--ease), transform .5s var(--ease); }
     @starting-style { .rise { opacity: 0; transform: translateY(8px); } }
@@ -83,6 +97,7 @@
   </style>
 </head>
 <body>
+  <script>try { const t = localStorage.theme; if (t) document.documentElement.dataset.theme = t; } catch {}</script>
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
 </body>

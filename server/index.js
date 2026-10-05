@@ -6,12 +6,14 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { randomBytes, createHash } from 'node:crypto';
+import nodemailer from 'nodemailer';
 import { MongoClient, ObjectId } from 'mongodb';
 import pdf from 'pdf-parse/lib/pdf-parse.js'; // lib path: the package root runs a debug test under ESM
 import { chunk, embed, generate, grade, charge, quizSchema, DIMS } from './ai.js';
 import billing, { PACK, PRO } from './billing.js';
 
-const { MONGODB_URI, JWT_SECRET, PORT = 3000 } = process.env;
+const { MONGODB_URI, JWT_SECRET, PORT = 3000, SMTP_URL, MAIL_FROM = 'StudyMate <no-reply@studymate.local>', APP_URL = 'http://localhost:5173' } = process.env;
 if (!MONGODB_URI || !JWT_SECRET) throw new Error('Set MONGODB_URI and JWT_SECRET in server/.env');
 
 const db = (await new MongoClient(MONGODB_URI).connect()).db('studymate');
@@ -43,22 +45,39 @@ const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 
 // ---------- auth ----------
 const cookieOpts = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 7 * 864e5 };
-const login = (res, u) => res.cookie('token', jwt.sign({ id: u._id }, JWT_SECRET, { expiresIn: '7d' }), cookieOpts)
+// sv = session version: a password reset bumps it, which logs out every older cookie.
+const login = (res, u) => res.cookie('token', jwt.sign({ id: u._id, sv: u.sv ?? 0 }, JWT_SECRET, { expiresIn: '7d' }), cookieOpts)
   .json({ id: u._id, email: u.email, credits: u.credits, plan: u.plan });
 
-function auth(req, res, next) {
-  try { req.uid = new ObjectId(jwt.verify(req.cookies.token, JWT_SECRET).id); next(); }
-  catch { bad(res, 'Not logged in', 401); }
+async function auth(req, res, next) {
+  let t;
+  try { t = jwt.verify(req.cookies.token, JWT_SECRET); req.uid = new ObjectId(t.id); }
+  catch { return bad(res, 'Not logged in', 401); }
+  const u = await users.findOne({ _id: req.uid }, { projection: { sv: 1 } });
+  u && (u.sv ?? 0) === (t.sv ?? 0) ? next() : bad(res, 'Not logged in', 401);
 }
+// bcrypt ignores bytes past 72, so cap it rather than silently truncate
+const validPw = p => typeof p === 'string' && p.length >= 8 && Buffer.byteLength(p) <= 72;
+const sha = t => createHash('sha256').update(t).digest('hex');
+const mailer = SMTP_URL && nodemailer.createTransport(SMTP_URL);
 async function hasCredits(req, res, next) {
   const u = await users.findOne({ _id: req.uid }, { projection: { credits: 1 } });
   u?.credits > 0 ? next() : bad(res, 'Out of tokens — recharge to continue', 402);
 }
 
-app.post('/api/signup', async (req, res) => {
+// ponytail: in-memory per-IP limit, fine for one process; move to a Mongo TTL collection if you scale out
+const attempts = new Map();
+function throttle(req, res, next) {
+  const now = Date.now(), a = attempts.get(req.ip);
+  if (!a || a.reset < now) attempts.set(req.ip, { n: 1, reset: now + 15 * 6e4 });
+  else if (++a.n > 10) return bad(res, 'Too many attempts. Try again in 15 minutes.', 429);
+  next();
+}
+
+app.post('/api/signup', throttle, async (req, res) => {
   const email = str(req.body.email)?.toLowerCase(), { password } = req.body;
-  if (!email?.includes('@') || typeof password !== 'string' || password.length < 8)
-    return bad(res, 'Valid email and 8+ char password required');
+  if (!email?.includes('@') || !validPw(password))
+    return bad(res, 'Valid email and an 8–72 character password required');
   const u = { email, passwordHash: await bcrypt.hash(password, 12), credits: 10000, plan: 'free' };
   try { u._id = (await users.insertOne(u)).insertedId; }
   catch (e) { if (e.code === 11000) return bad(res, 'Email already registered', 409); throw e; }
@@ -66,11 +85,39 @@ app.post('/api/signup', async (req, res) => {
   login(res, u);
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', throttle, async (req, res) => {
   const u = await users.findOne({ email: str(req.body.email)?.toLowerCase() });
   if (!u || typeof req.body.password !== 'string' || !(await bcrypt.compare(req.body.password, u.passwordHash)))
     return bad(res, 'Wrong email or password', 401);
   login(res, u);
+});
+
+// Same reply whether or not the email exists, so this can't be used to find accounts.
+app.post('/api/forgot', throttle, async (req, res) => {
+  const token = randomBytes(32).toString('hex');
+  const u = await users.findOneAndUpdate({ email: str(req.body.email)?.toLowerCase() },
+    { $set: { resetHash: sha(token), resetExp: new Date(Date.now() + 30 * 6e4) } });
+  if (u) {
+    const link = `${APP_URL}/reset?token=${token}`;
+    if (mailer) await mailer.sendMail({ from: MAIL_FROM, to: u.email, subject: 'Reset your StudyMate password',
+      text: `Someone asked to reset the password for your StudyMate account.
+
+Reset it here (link expires in 30 minutes):
+${link}
+
+If this wasn't you, ignore this email.` });
+    else console.log(`[dev] password reset link for ${u.email}: ${link}`);
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/reset', throttle, async (req, res) => {
+  const { token, password } = req.body;
+  if (typeof token !== 'string' || !validPw(password)) return bad(res, 'Choose an 8–72 character password');
+  const u = await users.findOneAndUpdate({ resetHash: sha(token), resetExp: { $gt: new Date() } },
+    { $set: { passwordHash: await bcrypt.hash(password, 12) }, $unset: { resetHash: 1, resetExp: 1 }, $inc: { sv: 1 } },
+    { returnDocument: 'after' });
+  u ? login(res, u) : bad(res, 'This reset link is invalid or has expired. Request a new one.');
 });
 
 app.post('/api/logout', (req, res) => res.clearCookie('token').json({ ok: true }));
@@ -102,7 +149,9 @@ app.get('/api/wallet', auth, async (req, res) => {
 app.get('/api/notes', auth, async (req, res) => {
   res.json(await chunks.aggregate([
     { $match: { userId: req.uid } },
-    { $group: { _id: '$noteId', title: { $first: '$noteTitle' }, subject: { $first: '$subject' }, chunks: { $sum: 1 }, at: { $first: '$at' } } },
+    { $sort: { i: 1 } },
+    { $group: { _id: '$noteId', title: { $first: '$noteTitle' }, subject: { $first: '$subject' }, chunks: { $sum: 1 }, at: { $first: '$at' },
+      source: { $first: '$source' }, pages: { $first: '$pages' }, excerpt: { $first: { $substrCP: ['$text', 0, 220] } } } },
     { $sort: { at: -1 } },
   ]).toArray());
 });
@@ -110,19 +159,20 @@ app.get('/api/notes', auth, async (req, res) => {
 app.post('/api/notes', auth, upload.single('file'), async (req, res) => {
   const title = str(req.body.title), subject = str(req.body.subject, 80);
   if (!title || !subject) return bad(res, 'Title and subject required');
-  let text = typeof req.body.text === 'string' ? req.body.text : '';
+  let text = typeof req.body.text === 'string' ? req.body.text : '', pages;
   if (req.file) {
     if (req.file.mimetype !== 'application/pdf') return bad(res, 'Only PDF files');
-    text = (await pdf(req.file.buffer)).text;
+    try { ({ text, numpages: pages } = await pdf(req.file.buffer)); }
+    catch { return bad(res, "Couldn't read that PDF. Is it damaged or password-protected?"); }
   }
   const parts = chunk(text);
   if (!parts.length) return bad(res, 'No readable text (scanned PDFs need OCR)');
   const vectors = await embed(parts);
-  const noteId = new ObjectId(), at = new Date();
+  const noteId = new ObjectId(), at = new Date(), source = req.file ? 'pdf' : 'text';
   await chunks.insertMany(parts.map((t, i) => ({
-    userId: req.uid, noteId, noteTitle: title, subject, text: t, embedding: vectors[i], i, at,
+    userId: req.uid, noteId, noteTitle: title, subject, source, pages, text: t, embedding: vectors[i], i, at,
   })));
-  res.json({ _id: noteId, title, subject, chunks: parts.length });
+  res.json({ _id: noteId, title, subject, source, pages, chunks: parts.length });
 });
 
 app.delete('/api/notes/:id', auth, async (req, res) => {

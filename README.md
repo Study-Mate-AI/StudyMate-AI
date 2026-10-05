@@ -13,6 +13,9 @@ RAG study assistant: upload notes → grounded chat with citations → AI quizze
    ```
    Open http://localhost:5173
 
+## Password reset email (optional)
+Set `SMTP_URL` (e.g. `smtps://user:pass@smtp.example.com:465`), `MAIL_FROM` and `APP_URL` (your site's address) in `server/.env`. Without `SMTP_URL`, reset links are printed to the server console, which is fine for local development.
+
 ## Payments (optional, test mode)
 1. In the Stripe dashboard, create two Payment Links (a one-time token pack and a monthly Pro subscription). Set each one's after-payment redirect to `<your app>/wallet?paid=1`, and turn on the no-code Customer Portal.
 2. Put them in `client/.env`:

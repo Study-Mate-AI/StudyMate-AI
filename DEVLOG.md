@@ -53,3 +53,26 @@ Built from the project plan, with Ponytail keeping it minimal: 4 server files, 6
 - A later successful retry (`invoice.paid`) sets the plan back to `pro` and grants that month's tokens. If Stripe gives up, `customer.subscription.deleted` → `free`.
 - Wallet shows a "Your Pro payment failed" alert with an **Update payment method** button (Customer Portal), and the plan badge reads "Pro · payment failed".
 - Past-due users don't see "Upgrade to Pro", so they can't start a second subscription.
+
+## 2026-10-06
+
+### Modules 1 & 2: Accounts and Notes refresh
+
+**Server**
+- Login/signup limited to 10 attempts per IP every 15 minutes (in-memory, returns 429).
+- Passwords capped at 72 bytes (bcrypt silently ignores anything longer).
+- PDF uploads record the page count; damaged or password-protected PDFs return a clear 400 instead of a 500.
+- Notes list now includes `source` (pdf/text), `pages` and a 220-character excerpt of the extracted text.
+
+**Client**
+- **Login/Signup:** split layout with a study-desk hero (ruled notebook page, highlighted passage, cited tutor answer); Log in / Sign up switch, visible labels, show/hide password, strength meter, and a "+10,000 free tokens" card shown during signup.
+- **Notes:** PDF/Text switch, drag-and-drop PDF area (title is filled from the filename), ruled text area, subject filter chips, notes grouped by subject as index cards with a coloured top edge, excerpt, page count and age, and a confirm step inside the card before deleting.
+
+### Verified
+Playwright end-to-end test against the real server, using an in-memory MongoDB with Gemini embeddings stubbed: signup → 10,000 tokens in wallet and ledger → non-PDF rejected → 2-page PDF uploaded (page count and excerpt shown) → text notes → subject filter → delete (cancel, then confirm) → logout returns 401 → wrong password, then correct → duplicate email gets 409 → 73-character password gets 400 → login throttle returns 429. Checked in light and dark mode at 1280 px and 375 px wide, with no horizontal scroll.
+
+### Forgot password + light/dark toggle
+- **Forgot password:** "Forgot password?" link on the login form, then email, then a reset link valid for 30 minutes that works once (only its SHA-256 hash is stored). The reply is the same whether or not the email exists, so it can't be used to find accounts. The link opens `/reset?token=…`, sets the new password and logs you in. Emails go through nodemailer when `SMTP_URL` is set; otherwise the link is printed to the server console.
+- **Every other device logged out after a reset:** the login cookie now carries a session version that a password reset increases, and `auth` checks it on every request (one indexed lookup).
+- **Light/dark toggle** in the nav and on the login page. Colours use CSS `light-dark()`, so the toggle only sets `data-theme` on `<html>`. The choice is saved in localStorage and applied before the first paint; with no choice saved, the system setting is followed.
+- Verified with Playwright: dark mode survives a reload, an unknown email gets the same reply, reset logs you in and removes the token from the URL, the old session gets 401, reusing the link gets 400, the old password is rejected and the new one works. The earlier end-to-end test still passes.
