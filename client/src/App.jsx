@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import Login from './pages/Login.jsx';
+import Landing from './pages/Landing.jsx';
 import Notes from './pages/Notes.jsx';
 import Chat from './pages/Chat.jsx';
 import Quiz from './pages/Quiz.jsx';
@@ -8,6 +9,16 @@ import Dashboard from './pages/Dashboard.jsx';
 import Wallet from './pages/Wallet.jsx';
 
 export const LOW = 1000;
+
+// A fixed, harmonious set of hues, handed out in alphabetical subject order so neighbours never clash.
+export const HUES = [150, 25, 250, 75, 330, 195, 285, 50];
+export const hueOf = (subjects, s) => HUES[[...subjects].sort((a, b) => a.localeCompare(b)).indexOf(s) % HUES.length];
+const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+export function ago(d) {
+  const s = (new Date(d) - Date.now()) / 1000;
+  for (const [u, n] of [['year', 31536e3], ['month', 2592e3], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), u);
+  return 'just now';
+}
 
 export async function api(path, { body, method, form } = {}) {
   const res = await fetch('/api' + path, {
@@ -17,7 +28,8 @@ export async function api(path, { body, method, form } = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 402) window.dispatchEvent(new Event('credits:empty'));
-  if (!res.ok) throw Object.assign(new Error(data.error || 'Request failed'), { status: res.status });
+  // No JSON error on a 5xx = the dev proxy couldn't reach the API server.
+  if (!res.ok) throw Object.assign(new Error(data.error || (res.status >= 500 ? "Can't reach the server. Is the API server running?" : 'Request failed')), { status: res.status });
   return data;
 }
 
@@ -81,7 +93,10 @@ export default function App() {
   }, []);
 
   if (user === undefined) return null;
-  if (!user) return <Login onLogin={setUser} />;
+  if (!user) return <Routes>
+    <Route path="/" element={<Landing onLogin={setUser} />} />
+    <Route path="*" element={<Login onLogin={setUser} />} />
+  </Routes>;
 
   const setCredits = credits => {
     if (credits == null) return;
@@ -107,7 +122,7 @@ export default function App() {
     </div>}
     <main>
       <Routes>
-        <Route path="/notes" element={<Notes />} />
+        <Route path="/notes" element={<Notes {...props} />} />
         <Route path="/chat" element={<Chat {...props} />} />
         <Route path="/quiz" element={<Quiz {...props} />} />
         <Route path="/quiz/:id" element={<Quiz {...props} />} />
@@ -117,6 +132,25 @@ export default function App() {
       </Routes>
     </main>
   </>;
+}
+
+// Google's own "Sign in with Google" button. Google renders it; the ID token goes to the server to verify.
+export function GoogleButton({ onLogin }) {
+  const ref = useRef();
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    const id = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (!id) return;
+    const init = () => {
+      google.accounts.id.initialize({ client_id: id, callback: ({ credential }) => api('/google', { body: { credential } }).then(onLogin, e => setErr(e.message)) });
+      google.accounts.id.renderButton(ref.current, { theme: 'outline', size: 'large', shape: 'pill', text: 'continue_with' });
+    };
+    if (window.google?.accounts) return init();
+    const s = document.querySelector('script[src*="gsi/client"]');
+    s?.addEventListener('load', init);
+    return () => s?.removeEventListener('load', init);
+  }, []);
+  return <div><div ref={ref} style={{ minHeight: 44 }} />{err && <p role="alert" className="err" style={{ fontSize: 13, margin: '6px 0 0' }}>{err}</p>}</div>;
 }
 
 // Subjects come from the notes list; shared by Chat and Quiz.

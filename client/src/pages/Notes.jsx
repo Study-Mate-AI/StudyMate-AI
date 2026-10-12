@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../App.jsx';
+import { Link } from 'react-router-dom';
+import { api, HUES, ago } from '../App.jsx';
 
 const css = `
 .drop { display: grid; place-items: center; gap: 4px; text-align: center; padding: 30px 20px; border: 1.5px dashed var(--line-2); border-radius: 10px; cursor: pointer;
@@ -24,19 +25,15 @@ const css = `
 .group-head h3 { margin: 0; font-size: 15px; }
 `;
 
-// A fixed, harmonious set of hues, handed out in alphabetical subject order so neighbours never clash.
-const HUES = [150, 25, 250, 75, 330, 195, 285, 50];
-const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-function ago(d) {
-  const s = (new Date(d) - Date.now()) / 1000;
-  for (const [u, n] of [['year', 31536e3], ['month', 2592e3], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), u);
-  return 'just now';
-}
 const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
-export default function Notes() {
+// Same list as the server's TYPES. Images and scanned PDFs are read by the AI, which uses tokens.
+const ACCEPT = '.pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,.webp';
+const ext = name => name.split('.').pop().toLowerCase();
+
+export default function Notes({ setCredits }) {
   const [notes, setNotes] = useState(null);
-  const [kind, setKind] = useState('pdf');
+  const [kind, setKind] = useState('file');
   const [file, setFile] = useState(null);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,20 +51,20 @@ export default function Notes() {
 
   const pick = f => {
     if (!f) return;
-    if (f.type !== 'application/pdf') return setErr('That file isn\'t a PDF.');
+    if (!ACCEPT.split(',').includes('.' + ext(f.name))) return setErr('Use a PDF, Word (.docx), PowerPoint (.pptx), image (PNG, JPG, WebP) or text file. Save old .doc/.ppt files as .docx/.pptx first.');
     setErr(''); setFile(f);
     const title = form.current.elements.title;
-    if (!title.value) title.value = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ');
+    if (!title.value) title.value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
   };
 
   const upload = async e => {
     e.preventDefault();
     const data = new FormData(e.target);
     data.delete('file');
-    if (kind === 'pdf') { if (!file) return setErr('Choose a PDF to upload.'); data.set('file', file); data.delete('text'); }
+    if (kind === 'file') { if (!file) return setErr('Choose a file to upload.'); data.set('file', file); data.delete('text'); }
     else if (!data.get('text').trim()) return setErr('Paste some notes first.');
     setBusy(true); setErr('');
-    try { await api('/notes', { form: data }); e.target.reset(); setFile(null); await load(); }
+    try { const n = await api('/notes', { form: data }); setCredits?.(n.credits); e.target.reset(); setFile(null); await load(); }
     catch (x) { setErr(x.message); }
     setBusy(false);
   };
@@ -87,20 +84,20 @@ export default function Notes() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <strong style={{ fontSize: 15 }}>Add notes</strong>
         <div className="seg" role="group" aria-label="Note type" style={{ marginLeft: 'auto' }}>
-          <button type="button" aria-pressed={kind === 'pdf'} onClick={() => { setKind('pdf'); setErr(''); }}>PDF</button>
+          <button type="button" aria-pressed={kind === 'file'} onClick={() => { setKind('file'); setErr(''); }}>File</button>
           <button type="button" aria-pressed={kind === 'text'} onClick={() => { setKind('text'); setErr(''); }}>Text</button>
         </div>
       </div>
 
-      {kind === 'pdf'
+      {kind === 'file'
         ? <label className={'drop' + (over ? ' over' : '')}
             onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
             onDrop={e => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files[0]); }}>
-            <input name="file" type="file" accept="application/pdf" onChange={e => pick(e.target.files[0])} aria-label="PDF file" />
-            <span className="pdf-icon" aria-hidden>PDF</span>
+            <input name="file" type="file" accept={ACCEPT} onChange={e => pick(e.target.files[0])} aria-label="Notes file" />
+            <span className="pdf-icon" aria-hidden>{file ? ext(file.name).toUpperCase().slice(0, 4) : 'FILE'}</span>
             {file
               ? <><strong>{file.name}</strong><span className="muted" style={{ fontSize: 13 }}>{(file.size / 1048576).toFixed(1)} MB · click to choose a different file</span></>
-              : <><strong>Drop a PDF here, or click to browse</strong><span className="muted" style={{ fontSize: 13 }}>Text is pulled from every page. Up to 10 MB.</span></>}
+              : <><strong>Drop a file here, or click to browse</strong><span className="muted" style={{ fontSize: 13 }}>PDF, Word, PowerPoint, images or text · up to 10 MB</span></>}
           </label>
         : <textarea name="text" className="ruled" placeholder="Paste or type your notes…" aria-label="Text notes"
             style={{ minHeight: 170, lineHeight: '28px', padding: '0 14px', resize: 'vertical' }} />}
@@ -116,13 +113,13 @@ export default function Notes() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button disabled={busy}>{busy ? 'Reading and indexing…' : 'Add to library'}</button>
         {err ? <span role="alert" className="err" style={{ fontSize: 14 }}>{err}</span>
-          : <span className="muted" style={{ fontSize: 13 }}>Indexing is free and doesn't use tokens.</span>}
+          : <span className="muted" style={{ fontSize: 13 }}>{file && /^(png|jpe?g|webp)$/.test(ext(file.name)) ? 'Images are read by the AI, which uses a few tokens per page.' : 'Indexing text is free. Images and scanned PDFs use a few tokens to read.'}</span>}
       </div>
     </form>
 
     {notes && !notes.length && <div className="card ruled" style={{ textAlign: 'center', padding: '56px 20px', marginTop: 24, lineHeight: '28px' }}>
       <p style={{ fontFamily: 'var(--serif)', fontSize: 24, margin: '-6px 0 0' }}>Your shelf is empty.</p>
-      <p className="muted" style={{ margin: '6px 0 0' }}>Add your first PDF or paste some notes above.</p>
+      <p className="muted" style={{ margin: '6px 0 0' }}>Add your first PDF, Word file, slides or photo of your notes above.</p>
     </div>}
 
     {subjects.length > 1 && <div role="group" aria-label="Filter by subject" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 32 }}>
@@ -137,6 +134,7 @@ export default function Notes() {
         <span className="dot" style={{ width: 10, height: 10 }} />
         <h3>{subject}</h3>
         <span className="muted num" style={{ fontSize: 13 }}>{plural(ns.length, 'note')}</span>
+        <Link to={'/chat?subject=' + encodeURIComponent(subject)} viewTransition style={{ marginLeft: 'auto', fontSize: 13 }}>Ask tutor →</Link>
       </div>
       <div className="shelf">
         {ns.map(n => <article className="note rise" key={n._id}>
@@ -150,7 +148,7 @@ export default function Notes() {
               ? <><span style={{ color: 'var(--bad)', marginRight: 'auto' }}>Delete this note?</span>
                   <button className="ghost" onClick={() => setConfirming(null)}>Cancel</button>
                   <button className="danger" onClick={() => del(n._id)}>Delete</button></>
-              : <><span>{n.pages ? plural(n.pages, 'page') : plural(n.chunks, 'section')}</span>
+              : <><span>{n.pages ? plural(n.pages, n.source === 'pptx' ? 'slide' : 'page') : plural(n.chunks, 'section')}</span>
                   <span>·</span><span title={new Date(n.at).toLocaleString()}>{ago(n.at)}</span>
                   <button className="ghost" style={{ marginLeft: 'auto' }} onClick={() => setConfirming(n._id)} aria-label={`Delete ${n.title}`}>Delete</button></>}
           </footer>

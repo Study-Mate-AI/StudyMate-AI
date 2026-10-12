@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js",
+    "demo": "node --watch demo.js",
     "check": "node check.js"
   },
   "dependencies": {

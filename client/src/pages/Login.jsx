@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api, ThemeToggle } from '../App.jsx';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { api, GoogleButton, ThemeToggle } from '../App.jsx';
 
 const css = `
 .auth { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
@@ -24,6 +24,7 @@ const css = `
 .sent { display: grid; gap: 6px; padding: 14px 16px; border-radius: 10px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); font-size: 14px; }
 .auth-card { width: 100%; max-width: 380px; display: grid; gap: 16px; }
 .auth-card h2 { margin: 0; }
+.or { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--ink-3); } .or::before, .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .pw { position: relative; } .pw input { padding-right: 64px; }
 .pw button { position: absolute; right: 4px; top: 50%; translate: 0 -50%; padding: 4px 10px; font-size: 12px; background: transparent; color: var(--ink-2); border: 0; }
 .pw button:hover { color: var(--ink); background: var(--line); }
@@ -54,7 +55,8 @@ export default function Login({ onLogin }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get('token');
-  const [mode, setMode] = useState(token ? 'reset' : 'login');
+  const { pathname } = useLocation();
+  const [mode, setMode] = useState(token ? 'reset' : pathname === '/signup' ? 'signup' : 'login');
   const [sent, setSent] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,7 @@ export default function Login({ onLogin }) {
   return <div className="auth">
     <style>{css}</style>
     <section className="auth-hero">
-      <span className="brand" style={{ fontFamily: 'var(--serif)', fontSize: 24 }}>StudyMate</span>
+      <Link to="/" className="brand" style={{ fontFamily: 'var(--serif)', fontSize: 24, color: 'var(--ink)', textDecoration: 'none' }}>StudyMate</Link>
       <div>
         <h1>Study from <em>your own</em> notes.</h1>
         <p style={{ color: 'var(--ink-2)', fontSize: 17, maxWidth: '44ch', margin: '18px 0 0' }}>
@@ -149,6 +151,7 @@ export default function Login({ onLogin }) {
         </div>}
 
         <button disabled={busy} style={{ padding: '11px 14px' }}>{BUTTON[mode][+busy]}</button>
+        {(mode === 'login' || signup) && <><div className="or">or</div><div style={{ justifySelf: 'center' }}><GoogleButton onLogin={onLogin} /></div></>}
         </>}
         {err && <p role="alert" className="err" style={{ margin: 0, fontSize: 14 }}>{err}</p>}
         <p className="muted" style={{ margin: 0, fontSize: 13, textAlign: 'center' }}>

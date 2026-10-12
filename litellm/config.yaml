@@ -1,0 +1,15 @@
+# LiteLLM proxy for StudyMate. The app sends requests here; LiteLLM forwards them to Gemini.
+# Key pool: copy both entries below with GEMINI_KEY_2, GEMINI_KEY_3... (one per Google project).
+# Entries sharing a model_name are load-balanced, and a rate-limited key is skipped.
+model_list:
+  - model_name: chat
+    litellm_params: { model: gemini/gemini-3.5-flash, api_key: os.environ/GEMINI_KEY_1 }
+  - model_name: embed
+    litellm_params: { model: gemini/gemini-embedding-001, api_key: os.environ/GEMINI_KEY_1 }
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

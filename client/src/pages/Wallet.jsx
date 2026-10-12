@@ -2,14 +2,15 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, useTween, LOW } from '../App.jsx';
 
-// Stripe Payment Links (test mode). Set the link's "after payment" redirect to <app>/wallet?paid=1.
-const env = import.meta.env;
-const LINKS = { pack: env.VITE_STRIPE_PACK_LINK, pro: env.VITE_STRIPE_PRO_LINK, portal: env.VITE_STRIPE_PORTAL_LINK };
-const PRICE = { pack: env.VITE_PACK_PRICE || '$5', pro: env.VITE_PRO_PRICE || '$9' };
+// Razorpay Checkout (script in index.html): card, UPI ID / UPI apps, and a UPI QR to scan.
+const METHODS = { display: {
+  blocks: { pay: { name: 'Pay with', instruments: [{ method: 'card' }, { method: 'upi', flows: ['collect', 'intent'] }, { method: 'upi', flows: ['qr'] }] } },
+  sequence: ['block.pay'], preferences: { show_default_blocks: false },
+} };
 
 const KIND = {
   chat: 'Tutor answer', quiz: 'Quiz generated', signup: 'Welcome bonus',
-  pack: 'Token pack', pro: 'Pro plan started', renewal: 'Pro renewal',
+  pack: 'Token pack', pro: 'Pro plan started', renewal: 'Pro renewal', read: 'File read by AI',
 };
 const fmt = n => n.toLocaleString();
 const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
@@ -23,6 +24,7 @@ export default function Wallet({ user, setCredits }) {
   const [w, setW] = useState(null);
   const [params, setParams] = useSearchParams();
   const [confirming, setConfirming] = useState(params.has('paid'));
+  const [payErr, setPayErr] = useState('');
 
   const load = () => api('/wallet').then(d => { setW(d); setCredits(d.credits); return d; });
   useEffect(() => { load(); }, []);
@@ -46,24 +48,35 @@ export default function Wallet({ user, setCredits }) {
   const pctLeft = w.credits + used ? w.credits / (w.credits + used) : 0;
   const low = w.credits < LOW;
   const subscribed = w.plan === 'pro' || w.plan === 'past_due';
-  const pay = kind => LINKS[kind] && `${LINKS[kind]}?client_reference_id=${user.id}&prefilled_email=${encodeURIComponent(user.email)}`;
+  const pay = async kind => {
+    setPayErr('');
+    try {
+      if (!window.Razorpay) throw new Error("Payment page didn't load. Check your connection and try again.");
+      const o = await api('/pay/order', { body: { kind } });
+      new window.Razorpay({
+        key: o.key, order_id: o.orderId, amount: o.amount, currency: o.currency,
+        name: 'StudyMate AI', description: kind === 'pro' ? 'Pro · one month' : 'Token pack',
+        prefill: { email: user.email }, theme: { color: '#3f8f6b' }, config: METHODS,
+        handler: async r => { setConfirming(true); await api('/pay/verify', { body: r }).catch(e => setPayErr(e.message)); await load(); setConfirming('done'); },
+      }).on('payment.failed', r => setPayErr(r.error?.description || 'Payment failed')).open();
+    } catch (e) { setPayErr(e.message); }
+  };
 
   return <>
     <p className="eyebrow">Wallet</p>
     <h2>Your <em>tokens</em></h2>
 
     {confirming && <div role="status" className="card rise" style={{ borderColor: confirming === 'slow' ? 'var(--warn)' : 'var(--accent)', background: confirming === 'slow' ? 'var(--warn-soft)' : 'var(--accent-soft)' }}>
-      {confirming === true && <><Spinner /> Confirming your payment with Stripe…</>}
+      {confirming === true && <><Spinner /> Confirming your payment…</>}
       {confirming === 'done' && <>Payment received. Your tokens are ready.</>}
-      {confirming === 'slow' && <>Stripe is taking longer than usual. Your tokens will appear here as soon as the payment is confirmed.</>}
+      {confirming === 'slow' && <>The payment is taking longer than usual. Your tokens will appear here as soon as the payment is confirmed.</>}
     </div>}
 
     {w.plan === 'past_due' && <div role="alert" className="card rise" style={{ borderColor: 'var(--bad)', background: 'var(--warn-soft)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
       <span style={{ flex: 1, minWidth: 220 }}>
         <strong style={{ color: 'var(--bad)' }}>Your Pro payment failed.</strong> Monthly tokens are paused until it goes through.
-        Your current balance still works, and Stripe will retry the card automatically.
+        Your current balance still works. Buy another Pro month below to continue.
       </span>
-      {LINKS.portal && <a className="btn" href={LINKS.portal}>Update payment method</a>}
     </div>}
 
     <section className="card rise" style={{ padding: 28 }}>
@@ -98,16 +111,15 @@ export default function Wallet({ user, setCredits }) {
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
       <Plan title="Free" price="$0" note="to start" current={!subscribed}
         points={['10,000 tokens on signup', 'Every feature included', 'Top up anytime']} />
-      <Plan title="Token pack" price={PRICE.pack} note="one-time"
+      <Plan title="Token pack" price={`₹${w.prices.pack}`} note="one-time"
         points={[`${fmt(w.offers.pack)} tokens`, 'Never expire', 'Stacks with any plan']}
-        action={<Pay href={pay('pack')} label="Buy tokens" />} />
-      <Plan title="Pro" price={PRICE.pro} note="per month" featured current={subscribed}
-        points={[`${fmt(w.offers.pro)} tokens every month`, 'Unused tokens carry over', 'Cancel anytime']}
-        action={subscribed
-          ? LINKS.portal && <a className="btn ghost" href={LINKS.portal}>{w.plan === 'past_due' ? 'Update payment method' : 'Manage subscription'}</a>
-          : <Pay href={pay('pro')} label="Upgrade to Pro" accent />} />
+        action={<button onClick={() => pay('pack')}>Buy tokens</button>} />
+      <Plan title="Pro" price={`₹${w.prices.pro}`} note="per month" featured current={subscribed}
+        points={[`${fmt(w.offers.pro)} tokens for the month`, 'Unused tokens carry over', 'No auto-renewal']}
+        action={<button className="btn accent" onClick={() => pay('pro')}>{subscribed ? 'Add another month' : 'Upgrade to Pro'}</button>} />
     </div>
-    {!LINKS.pack && !LINKS.pro && <p className="muted" style={{ fontSize: 13 }}>Payments aren't configured: set VITE_STRIPE_PACK_LINK and VITE_STRIPE_PRO_LINK in client/.env.</p>}
+    {payErr && <p role="alert" style={{ fontSize: 13, color: 'var(--bad)' }}>{payErr}</p>}
+    <p className="muted" style={{ fontSize: 13 }}>Pay by card, UPI ID / UPI app, or scan a UPI QR code. Secured by Razorpay.</p>
 
     <p className="eyebrow" style={{ marginTop: 40 }}>Activity</p>
     <section className="card rise">
@@ -144,10 +156,6 @@ function Plan({ title, price, note, points, action, featured, current }) {
     {action}
   </div>;
 }
-
-const Pay = ({ href, label, accent }) => href
-  ? <a className={'btn' + (accent ? ' accent' : '')} href={href}>{label}</a>
-  : <button disabled title="Payment link not configured">{label}</button>;
 
 const Spinner = () => <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden style={{ verticalAlign: '-2px', marginRight: 6 }}>
   <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="42 100" strokeLinecap="round">

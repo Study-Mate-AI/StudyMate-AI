@@ -1,0 +1,9 @@
+# Start: docker compose up -d   (from this folder)   Stop: docker compose down
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    ports: ["4000:4000"]
+    env_file: .env          # GEMINI_KEY_1, LITELLM_MASTER_KEY (gitignored)
+    volumes: ["./config.yaml:/app/config.yaml:ro"]
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    restart: unless-stopped

@@ -1,3 +1,12 @@
 node_modules
 dist
+
+# Secrets: API keys, Atlas user/password, Stripe keys. Only the .example template is committed.
 .env
+.env.*
+!.env.example
+*.pem
+
+# Playwright output
+test-results
+playwright-report
