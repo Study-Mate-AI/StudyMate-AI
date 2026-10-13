@@ -19,7 +19,9 @@ async function proxy(path, body) {
 }
 // Gemini's schema uses upper-case types (ARRAY, OBJECT); standard JSON Schema wants lower-case.
 const jsonSchema = schema => JSON.parse(JSON.stringify(schema).replace(/"type":"([A-Z]+)"/g, (_, t) => `"type":"${t.toLowerCase()}"`));
-const CHAT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+// Chat models in order. Each model has its own daily free-tier quota (gemini-3.5-flash: only 20 requests/day),
+// so when one runs out (429) the next takes over. Flash-Lite first: higher free limits and cheaper.
+const CHAT_MODELS = (process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.5-flash').split(',').map(m => m.trim()).filter(Boolean);
 const EMBED_MODEL = process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-001';
 export const DIMS = 768;
 
@@ -78,7 +80,7 @@ export const cost = (prompt = 0, total = 0) => total - prompt + Math.ceil(prompt
 export async function generate(prompt, schema, file) {
   if (LITELLM_URL) {
     const d = await retry(() => proxy('/v1/chat/completions', {
-      model: 'chat', reasoning_effort: 'disable',
+      model: 'chat', // thinking settings live per model in litellm/config.yaml
       messages: [{ role: 'user', content: !file ? prompt : [{ type: 'text', text: prompt }, file.mimeType === 'application/pdf'
         ? { type: 'file', file: { file_data: `data:application/pdf;base64,${file.data.toString('base64')}` } }
         : { type: 'image_url', image_url: { url: `data:${file.mimeType};base64,${file.data.toString('base64')}` } }] }],
@@ -86,14 +88,18 @@ export async function generate(prompt, schema, file) {
     }));
     return { text: d.choices[0].message.content, tokens: cost(d.usage?.prompt_tokens, d.usage?.total_tokens) };
   }
-  const res = await retry(ai => ai.models.generateContent({
-    model: CHAT_MODEL,
-    contents: !file ? prompt : [{ role: 'user', parts: [{ inlineData: { mimeType: file.mimeType, data: file.data.toString('base64') } }, { text: prompt }] }],
-    // Thinking off: measured ~15% of a tutor answer's tokens and ~40% of a quiz's, with no loss in quiz validity.
-    // ponytail: assumes a Flash model; a Pro model can't disable thinking, drop thinkingConfig if you switch.
-    config: { thinkingConfig: { thinkingBudget: 0 }, ...(schema && { responseMimeType: 'application/json', responseSchema: schema }) },
-  }));
-  return { text: res.text, tokens: cost(res.usageMetadata?.promptTokenCount, res.usageMetadata?.totalTokenCount) };
+  for (const [i, model] of CHAT_MODELS.entries()) {
+    try {
+      const res = await retry(ai => ai.models.generateContent({
+        model,
+        contents: !file ? prompt : [{ role: 'user', parts: [{ inlineData: { mimeType: file.mimeType, data: file.data.toString('base64') } }, { text: prompt }] }],
+        // Thinking off on Flash: measured ~15% of a tutor answer's tokens and ~40% of a quiz's. Flash-Lite doesn't think
+        // by default and rejects thinkingBudget, so it gets no thinkingConfig.
+        config: { ...(!model.includes('lite') && { thinkingConfig: { thinkingBudget: 0 } }), ...(schema && { responseMimeType: 'application/json', responseSchema: schema }) },
+      }));
+      return { text: res.text, tokens: cost(res.usageMetadata?.promptTokenCount, res.usageMetadata?.totalTokenCount) };
+    } catch (e) { if (e.status !== 429 || i === CHAT_MODELS.length - 1) throw e; } // daily quota used up: next model
+  }
 }
 
 // Text out of an image or a scanned PDF (no text layer), read by Gemini. Returns one string per page.

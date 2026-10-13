@@ -222,27 +222,6 @@ app.post('/api/notes', auth, upload.single('file'), async (req, res) => {
   const credits = aiTokens ? await charge(db, req.uid, aiTokens, 'read') : undefined;
   res.json({ _id: noteId, title, subject, source, pages, chunks: parts.length, credits });
 });
-app.post('/api/notes', auth, upload.single('file'), async (req, res) => {
-  const title = str(req.body.title), subject = str(req.body.subject, 80);
-  if (!title || !subject) return bad(res, 'Title and subject required');
-  let text = typeof req.body.text === 'string' ? req.body.text : '', pages;
-  const pageTexts = [];
-  if (req.file) {
-    if (req.file.mimetype !== 'application/pdf') return bad(res, 'Only PDF files');
-    try { ({ numpages: pages } = await pdf(req.file.buffer, { pagerender: p => pageText(p).then(t => (pageTexts.push(t), t)) })); }
-    catch { return bad(res, "Couldn't read that PDF. Is it damaged or password-protected?"); }
-  }
-  const parts = chunk(req.file ? pageTexts : text);
-  if (!parts.length) return bad(res, 'No readable text (scanned PDFs need OCR)');
-  const vectors = await embed(parts.map(p => p.text));
-  const noteId = new ObjectId(), at = new Date(), source = req.file ? 'pdf' : 'text';
-  await chunks.insertMany(parts.map((p, i) => ({
-    userId: req.uid, noteId, noteTitle: title, subject, source, pages, text: p.text, embedding: vectors[i], i, at,
-    ...(req.file && { page: p.from, pageTo: p.to }),
-  })));
-  res.json({ _id: noteId, title, subject, source, pages, chunks: parts.length });
-});
-
 app.delete('/api/notes/:id', auth, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return bad(res, 'Bad id');
   const r = await chunks.deleteMany({ noteId: new ObjectId(req.params.id), userId: req.uid });

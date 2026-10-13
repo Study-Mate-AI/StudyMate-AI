@@ -197,3 +197,11 @@ Measured with real Gemini (`gemini-3.5-flash`) on Research Methodology notes:
 - Pro = one prepaid month per purchase, no auto-renewal. Stripe webhook code left in place, no longer linked from the UI.
 - Settings: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` in `server/.env` (test keys from the Razorpay dashboard, Test mode).
 - Verified: `check.js` signature check, client build. **Not yet run with real Razorpay test keys.**
+
+## 2026-10-13
+
+### Fix: tutor and quiz failing with "AI is busy" / "Server error"
+- Cause: Gemini's free tier allows **only 20 requests per day per project for `gemini-3.5-flash`** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, value 20). Once it was used up every request got 429 `RESOURCE_EXHAUSTED` (resets after ~24 h); the LiteLLM logs also showed 503 overloads.
+- `GEMINI_MODEL` is now an ordered list, default `gemini-3.5-flash-lite,gemini-3.5-flash`. Each model has its own daily quota; on 429 the next model is used. Flash-Lite has higher free limits, is cheaper, doesn't think by default, and rejects `thinkingBudget` (so it gets no thinking config).
+- LiteLLM: `chat` = flash-lite, `chat-backup` = flash (`reasoning_effort: disable` set per model in config.yaml), with `fallbacks: [{ chat: [chat-backup] }]`.
+- Verified with the real key while flash's quota was used up: chat + quiz JSON work directly, through LiteLLM, and with flash listed first (falls back to lite). End-to-end tutor answer (110 tokens) + 5-question quiz passed.
