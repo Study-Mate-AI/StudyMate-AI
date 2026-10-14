@@ -126,6 +126,10 @@ export default function Login({ onLogin }) {
           <strong>Check your inbox</strong>
           <span className="muted">If an account exists for {sent}, a reset link is on its way. It expires in 30 minutes.</span>
         </div> : <>
+        {signup && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          <label className="field">Full name<input name="name" placeholder="e.g. Asha Verma" autoComplete="name" required maxLength={80} /></label>
+          <label className="field">Date of birth<input name="birthDate" type="date" autoComplete="bday" required max={new Date().toISOString().slice(0, 10)} /></label>
+        </div>}
         {mode !== 'reset' && <label className="field">Email
           <input name="email" type="email" placeholder="you@university.edu" autoComplete="email" required />
         </label>}

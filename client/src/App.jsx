@@ -15,7 +15,8 @@ export const cr = t => (Math.round((t || 0) / 10) / 10).toLocaleString();
 export const AVG = { chat: 300, quiz: 900 };
 export const left = (balance, avg = AVG.chat) => Math.floor((balance || 0) / Math.max(avg, 1));
 // The name the user set in Settings → Profile, else the part of the email before @.
-export const nameOf = u => u.profile?.name || u.email.split('@')[0];
+// First name for the sidebar (from Settings → Profile / signup), else the part of the email before @.
+export const nameOf = u => u.profile?.name?.split(' ')[0] || u.email.split('@')[0];
 export const LOW = 300; // tokens (3 credits ≈ 1 question): show the low-balance warning below this
 
 // A fixed, harmonious set of hues, handed out in alphabetical subject order so neighbours never clash.

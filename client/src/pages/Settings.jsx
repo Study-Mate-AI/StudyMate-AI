@@ -52,7 +52,7 @@ function Profile({ user, setUser }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
       <span className="avatar" style={{ width: 52, height: 52, fontSize: 22 }} aria-hidden>{nameOf(user)[0].toUpperCase()}</span>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{nameOf(user)}</strong>
+        <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || nameOf(user)}</strong>
         <span className="muted" style={{ fontSize: 13 }}>{user.email} · {{ pro: 'Pro plan', past_due: 'Pro · payment failed' }[user.plan] || 'Free plan'}</span>
       </div>
       {!editing && <button className="ghost" onClick={() => { setEditing(true); setMsg(null); }}>Edit profile</button>}

@@ -221,3 +221,9 @@ Measured with real Gemini (`gemini-3.5-flash`) on Research Methodology notes:
 - Fix: login/signup now return the same account fields as `GET /api/me` (shared `me()`). Right after signup, Settings showed "Member since —" and "You signed in with Google" for email accounts until a reload.
 - Verified in the browser against Atlas: 11/11 checks (no sidebar logout, invalid phone rejected, profile saved and shown, name in sidebar, survives reload, Settings logout → landing page, no page errors).
 - Removed leftover data from earlier interrupted test runs (test accounts' chunks, sessions, quizzes, topics, stored files).
+
+### Signup asks for name and date of birth; first name in the sidebar
+- Signup form: Full name + Date of birth (both required, signup mode only). The server validates them with the same `cleanProfile()` as Settings → Profile and saves them into the profile, so they show up there straight away.
+- New Google accounts get their name from Google (`name` in the verified token). Date of birth can be added in Settings.
+- Sidebar shows the first name (`nameOf()`); Settings shows the full name. Falls back to the part of the email before "@" if no name is set.
+- Verified in the browser: signup without a name / with 2004-02-30 gets 400, signup with name + DOB shows "Asha" in the sidebar and both fields in Settings, the login form doesn't show the new fields, no page errors.

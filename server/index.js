@@ -95,7 +95,11 @@ app.post('/api/signup', throttle, async (req, res) => {
   const email = str(req.body.email)?.toLowerCase(), { password } = req.body;
   if (!email?.includes('@') || !validPw(password))
     return bad(res, 'Valid email and an 8–72 character password required');
-  const u = { email, passwordHash: await bcrypt.hash(password, 12), credits: SIGNUP_BONUS, plan: 'free' };
+  // Name and date of birth go straight into the profile (same validation as Settings → Profile).
+  const { profile, error } = cleanProfile({ name: req.body.name, birthDate: req.body.birthDate });
+  if (error) return bad(res, error);
+  if (!profile.name || !profile.birthDate) return bad(res, 'Enter your name and date of birth');
+  const u = { email, passwordHash: await bcrypt.hash(password, 12), credits: SIGNUP_BONUS, plan: 'free', profile };
   try { u._id = (await users.insertOne(u)).insertedId; }
   catch (e) { if (e.code === 11000) return bad(res, 'Email already registered', 409); throw e; }
   await ledger.insertOne({ userId: u._id, kind: 'signup', delta: u.credits, at: new Date() });
@@ -119,7 +123,7 @@ app.post('/api/google', throttle, async (req, res) => {
   const email = t.email.toLowerCase();
   let u = await users.findOne({ email });
   if (!u) {
-    u = { email, credits: SIGNUP_BONUS, plan: 'free', google: true };
+    u = { email, credits: SIGNUP_BONUS, plan: 'free', google: true, profile: cleanProfile({ name: t.name }).profile ?? {} }; // name from Google; DOB can be added in Settings
     try {
       u._id = (await users.insertOne(u)).insertedId;
       await ledger.insertOne({ userId: u._id, kind: 'signup', delta: u.credits, at: new Date() });
