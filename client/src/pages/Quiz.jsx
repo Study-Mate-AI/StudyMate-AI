@@ -105,7 +105,7 @@ function Generate({ setCredits }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button disabled={busy}>{busy ? <><Spinner /> Writing {n} questions…</> : 'Generate quiz'}</button>
         {err ? <span role="alert" className="err" style={{ fontSize: 14 }}>{err}</span>
-          : <span className="muted" style={{ fontSize: 13 }}>{subjects.length ? 'Uses tokens for the AI call only. Taking the quiz is free.' : <>No notes yet. <Link to="/notes" viewTransition>Upload some</Link> to get quizzes built from them.</>}</span>}
+          : <span className="muted" style={{ fontSize: 13 }}>{subjects.length ? 'Uses credits to write the quiz. Taking it is free.' : <>No notes yet. <Link to="/notes" viewTransition>Upload some</Link> to get quizzes built from them.</>}</span>}
       </div>
     </form>
 

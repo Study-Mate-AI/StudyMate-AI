@@ -104,7 +104,7 @@ export default function Login({ onLogin }) {
       </div>
 
       <div className="facts">
-        <span><strong>10,000</strong>free tokens when you sign up</span>
+        <span><strong>5</strong>free credits when you sign up</span>
         <span><strong>[1]</strong>every answer cites your notes</span>
         <span><strong>&lt;70%</strong>topics flagged for review</span>
       </div>
@@ -146,8 +146,8 @@ export default function Login({ onLogin }) {
         </div>}
 
         {signup && <div className="bonus rise">
-          <span className="num">+10,000</span>
-          <span>free AI tokens added to your wallet, enough for plenty of tutor questions and quizzes.</span>
+          <span className="num">+5</span>
+          <span>free credits added to your wallet to try the tutor and quizzes. Top up anytime.</span>
         </div>}
 
         <button disabled={busy} style={{ padding: '11px 14px' }}>{BUTTON[mode][+busy]}</button>

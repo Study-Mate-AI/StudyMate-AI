@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import Login from './pages/Login.jsx';
 import Landing from './pages/Landing.jsx';
 import Notes from './pages/Notes.jsx';
@@ -7,8 +7,16 @@ import Chat from './pages/Chat.jsx';
 import Quiz from './pages/Quiz.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Wallet from './pages/Wallet.jsx';
+import Settings from './pages/Settings.jsx';
 
-export const LOW = 1000;
+// Balances are stored in tokens; everything users see is credits. 1 credit = 100 tokens.
+export const cr = t => (Math.round((t || 0) / 10) / 10).toLocaleString();
+// Typical cost of one query in tokens, used for "≈ N questions left" until the user has their own average.
+export const AVG = { chat: 300, quiz: 900 };
+export const left = (balance, avg = AVG.chat) => Math.floor((balance || 0) / Math.max(avg, 1));
+// The name the user set in Settings → Profile, else the part of the email before @.
+export const nameOf = u => u.profile?.name || u.email.split('@')[0];
+export const LOW = 300; // tokens (3 credits ≈ 1 question): show the low-balance warning below this
 
 // A fixed, harmonious set of hues, handed out in alphabetical subject order so neighbours never clash.
 export const HUES = [150, 25, 250, 75, 330, 195, 285, 50];
@@ -71,23 +79,83 @@ export function ThemeToggle({ style }) {
   </button>;
 }
 
+const sbCss = `
+.shell { --sbw: 252px; min-height: 100dvh; }
+.shell.collapsed { --sbw: 68px; }
+.sb { position: fixed; inset: 0 auto 0 0; z-index: 20; width: var(--sbw); display: flex; flex-direction: column; gap: 4px; padding: 12px 10px;
+  background: color-mix(in srgb, var(--surface) 70%, var(--paper)); border-right: 1px solid var(--line); transition: width .25s var(--ease), transform .25s var(--ease); overflow: hidden; }
+.sb-top { display: flex; align-items: center; gap: 8px; padding: 2px 4px 12px; min-height: 44px; }
+.sb-brand { font-family: var(--serif); font-size: 22px; white-space: nowrap; color: var(--ink); text-decoration: none; flex: 1; }
+.sb-icon { flex: none; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; background: transparent; color: var(--ink-2); border: 0; border-radius: 9px; }
+.sb-icon:hover { background: var(--line); color: var(--ink); }
+.sb a.item, .sb button.item { display: flex; align-items: center; gap: 12px; padding: 9px 11px; border-radius: 9px; color: var(--ink-2); text-decoration: none; white-space: nowrap;
+  background: transparent; border: 0; font: inherit; font-size: 14.5px; font-weight: 500; width: 100%; justify-content: flex-start; transition: background .15s, color .15s; }
+.sb .item svg { flex: none; }
+.sb .item:hover { background: var(--line); color: var(--ink); }
+.sb a.item.active { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.sb .label { overflow: hidden; text-overflow: ellipsis; transition: opacity .2s; }
+.collapsed .sb .label, .collapsed .sb-brand, .collapsed .sb-credit .detail { opacity: 0; pointer-events: none; }
+.collapsed .sb-top { flex-direction: column; gap: 4px; }
+.collapsed .sb-brand { display: none; }
+.sb-sep { height: 1px; background: var(--line); margin: 8px 4px; }
+.sb-credit { display: flex; align-items: center; gap: 12px; padding: 10px 11px; border-radius: 10px; text-decoration: none; color: var(--ink); border: 1px solid var(--line); background: var(--surface); white-space: nowrap; }
+.sb-credit:hover { border-color: var(--line-2); }
+.sb-credit .detail { display: grid; line-height: 1.25; min-width: 0; }
+.sb-user { display: flex; align-items: center; gap: 10px; padding: 8px 6px; white-space: nowrap; }
+.avatar { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 14px; }
+.sb-user .who { min-width: 0; display: grid; line-height: 1.25; font-size: 13px; }
+.sb-user .who b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.page { margin-left: var(--sbw); transition: margin-left .25s var(--ease); }
+.topbar { display: none; }
+.scrim { display: none; }
+.alert-bar { padding: 10px 20px; text-align: center; border-bottom: 1px solid var(--line); display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }
+.alert-bar button { padding: 3px 9px; font-size: 12px; background: transparent; color: inherit; border-color: currentColor; }
+@media (max-width: 760px) {
+  .shell, .shell.collapsed { --sbw: 0px; }
+  .sb { width: 264px; transform: translateX(-100%); box-shadow: 0 0 40px rgb(0 0 0 / .3); }
+  .shell.open .sb { transform: none; }
+  .shell.open .scrim { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / .35); }
+  .collapsed .sb .label, .collapsed .sb-brand, .collapsed .sb-credit .detail { opacity: 1; pointer-events: auto; }
+  .collapsed .sb-brand { display: block; } .collapsed .sb-top { flex-direction: row; }
+  .sb .collapse-btn { display: none; }
+  .topbar { display: flex; position: sticky; top: 0; z-index: 10; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--paper) 85%, transparent); backdrop-filter: blur(12px); }
+}
+`;
+
+// Small stroke icons for the sidebar (24×24 paths).
+const I = {
+  notes: 'M5 3h10l4 4v14H5z M15 3v4h4 M8 12h8 M8 16h6', tutor: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5', quiz: 'M9 11l2 2 4-4 M4 4h16v16H4z',
+  progress: 'M4 20V10 M10 20V4 M16 20v-7 M22 20H2', wallet: 'M3 7h18v13H3z M3 7l3-4h12l3 4 M16 13h2',
+  settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
+  panel: 'M3 4h18v16H3z M9 4v16', menu: 'M4 6h16 M4 12h16 M4 18h16',
+};
+export const Ico = ({ d, size = 19 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>;
+
 function CreditMeter({ credits }) {
   const shown = useTween(credits);
   const state = credits <= 0 ? 'var(--bad)' : credits < LOW ? 'var(--warn)' : 'var(--good)';
-  return <Link to="/wallet" viewTransition className="btn ghost" title="Token wallet" style={{ padding: '6px 12px' }}>
-    <span aria-hidden style={{ width: 7, height: 7, borderRadius: 9, background: state, boxShadow: `0 0 0 3px color-mix(in srgb, ${state} 20%, transparent)` }} />
-    <span className="num">{shown.toLocaleString()}</span>
-    <span className="muted" style={{ fontSize: 13 }}>tokens</span>
+  return <Link to="/wallet" viewTransition className="sb-credit" title={`${cr(credits)} credits · about ${left(credits)} questions left`}>
+    <span aria-hidden style={{ flex: 'none', width: 9, height: 9, margin: '0 5px', borderRadius: 9, background: state, boxShadow: `0 0 0 3px color-mix(in srgb, ${state} 20%, transparent)` }} />
+    <span className="detail">
+      <span><span className="num" style={{ fontWeight: 600 }}>{cr(shown)}</span> <span className="muted" style={{ fontSize: 13 }}>credits</span></span>
+      <span className="muted" style={{ fontSize: 12 }}>≈ {left(credits)} question{left(credits) === 1 ? '' : 's'} left</span>
+    </span>
   </Link>;
 }
 
 export default function App() {
   const [user, setUser] = useState(undefined);
   const [empty, setEmpty] = useState(false);
+  const [low, setLow] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.sidebar === 'collapsed'; } catch { return false; } });
+  const [open, setOpen] = useState(false); // phone drawer
+  const navigate = useNavigate();
+  const toggle = () => setCollapsed(c => { try { localStorage.sidebar = c ? 'open' : 'collapsed'; } catch {} return !c; });
   const refresh = () => api('/me').then(setUser, () => setUser(null));
   useEffect(() => { refresh(); }, []);
   useEffect(() => {
-    const on = () => { setEmpty(true); setUser(u => u && { ...u, credits: 0 }); };
+    const on = () => { setEmpty(true); setLow(false); setUser(u => u && { ...u, credits: 0 }); };
     window.addEventListener('credits:empty', on);
     return () => window.removeEventListener('credits:empty', on);
   }, []);
@@ -98,29 +166,57 @@ export default function App() {
     <Route path="*" element={<Login onLogin={setUser} />} />
   </Routes>;
 
+  // The request that used the last credits is always finished and shown; the warning comes after it.
   const setCredits = credits => {
     if (credits == null) return;
     setUser(u => ({ ...u, credits }));
-    if (credits > 0) setEmpty(false);
+    setEmpty(credits <= 0);
+    setLow(credits > 0 && credits < LOW);
   };
-  const logout = () => api('/logout', { method: 'POST' }).then(() => setUser(null));
-  const props = { user, setCredits, refresh };
-  const tab = (to, label) => <NavLink to={to} viewTransition className="tab">{label}</NavLink>;
+  const logout = () => api('/logout', { method: 'POST' }).finally(() => { setUser(null); setEmpty(false); setLow(false); navigate('/', { replace: true }); });
+  const props = { user, setCredits, refresh, setUser };
+  const item = (to, icon, label) => <NavLink to={to} viewTransition className="item" title={collapsed ? label : undefined} onClick={() => setOpen(false)}>
+    <Ico d={I[icon]} /><span className="label">{label}</span>
+  </NavLink>;
 
-  return <>
-    <nav>
-      <span className="brand">StudyMate</span>
-      {tab('/notes', 'Notes')}{tab('/chat', 'Tutor')}{tab('/quiz', 'Quiz')}{tab('/dashboard', 'Progress')}{tab('/wallet', 'Wallet')}
-      <span className="right">
-        <CreditMeter credits={user.credits} />
-        <ThemeToggle />
-        <button className="ghost" onClick={logout}>Log out</button>
-      </span>
-    </nav>
-    {empty && <div role="alert" className="rise" style={{ background: 'var(--warn-soft)', color: 'var(--warn)', padding: '10px 20px', textAlign: 'center', borderBottom: '1px solid var(--line)' }}>
-      You're out of tokens. <Link to="/wallet" viewTransition style={{ color: 'inherit', fontWeight: 600 }}>Recharge to keep studying →</Link>
-    </div>}
-    <main>
+  return <div className={'shell' + (collapsed ? ' collapsed' : '') + (open ? ' open' : '')}>
+    <style>{sbCss}</style>
+    <aside className="sb" aria-label="Main navigation">
+      <div className="sb-top">
+        <Link to="/notes" className="sb-brand" onClick={() => setOpen(false)}>StudyMate</Link>
+        <button className="sb-icon collapse-btn" onClick={toggle} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <Ico d={I.panel} />
+        </button>
+      </div>
+      {item('/notes', 'notes', 'Notes')}{item('/chat', 'tutor', 'Tutor')}{item('/quiz', 'quiz', 'Quiz')}
+      {item('/dashboard', 'progress', 'Progress')}{item('/wallet', 'wallet', 'Wallet')}
+      <div style={{ flex: 1 }} />
+      <CreditMeter credits={user.credits} />
+      <div className="sb-sep" />
+      {item('/settings', 'settings', 'Settings')}
+      <Link to="/settings" className="sb-user" title={`${nameOf(user)} · ${user.email}`} onClick={() => setOpen(false)} style={{ textDecoration: 'none', color: 'inherit', borderRadius: 9 }}>
+        <span className="avatar" aria-hidden>{nameOf(user)[0].toUpperCase()}</span>
+        <span className="who label"><b>{nameOf(user)}</b><span className="muted">{{ pro: 'Pro plan', past_due: 'Pro · payment failed' }[user.plan] || 'Free plan'}</span></span>
+      </Link>
+    </aside>
+    <div className="scrim" onClick={() => setOpen(false)} />
+
+    <div className="page">
+      <div className="topbar">
+        <button className="sb-icon" onClick={() => setOpen(true)} aria-label="Open menu"><Ico d={I.menu} /></button>
+        <span className="sb-brand">StudyMate</span>
+        <Link to="/wallet" className="muted" style={{ fontSize: 13, textDecoration: 'none' }}><span className="num" style={{ color: 'var(--ink)' }}>{cr(user.credits)}</span> credits</Link>
+      </div>
+      {empty && <div role="alert" className="alert-bar rise" style={{ background: 'var(--warn-soft)', color: 'var(--bad)' }}>
+        <span>You've used all your credits. Your last request was completed; new questions and quizzes need a top-up.</span>
+        <Link to="/wallet" viewTransition style={{ color: 'inherit', fontWeight: 600 }}>Recharge →</Link>
+      </div>}
+      {low && <div role="status" className="alert-bar rise" style={{ background: 'var(--warn-soft)', color: 'var(--warn)' }}>
+        <span>Running low: {cr(user.credits)} credits left, about {left(user.credits)} more question{left(user.credits) === 1 ? '' : 's'}.</span>
+        <Link to="/wallet" viewTransition style={{ color: 'inherit', fontWeight: 600 }}>Top up</Link>
+        <button onClick={() => setLow(false)}>Dismiss</button>
+      </div>}
+      <main>
       <Routes>
         <Route path="/notes" element={<Notes {...props} />} />
         <Route path="/chat" element={<Chat {...props} />} />
@@ -128,10 +224,12 @@ export default function App() {
         <Route path="/quiz/:id" element={<Quiz {...props} />} />
         <Route path="/dashboard" element={<Dashboard {...props} />} />
         <Route path="/wallet" element={<Wallet {...props} />} />
+        <Route path="/settings" element={<Settings {...props} logout={logout} />} />
         <Route path="*" element={<Navigate to="/notes" />} />
       </Routes>
-    </main>
-  </>;
+      </main>
+    </div>
+  </div>;
 }
 
 // Google's own "Sign in with Google" button. Google renders it; the ID token goes to the server to verify.

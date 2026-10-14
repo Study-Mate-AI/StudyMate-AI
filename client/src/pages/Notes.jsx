@@ -27,7 +27,21 @@ const css = `
 
 const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
-// Same list as the server's TYPES. Images and scanned PDFs are read by the AI, which uses tokens.
+// The note's contents index (headings → pages), built at upload and used by the tutor to jump to a topic's pages.
+function Contents({ note }) {
+  const [list, setList] = useState(null);
+  const unit = note.source === 'pptx' ? 'slide' : 'p.';
+  return <details onToggle={e => e.target.open && !list && api(`/notes/${note._id}/topics`).then(setList, () => setList([]))} style={{ fontSize: 13, marginTop: -2 }}>
+    <summary>Contents</summary>
+    {!list ? <p className="muted" style={{ margin: '6px 0 0' }}>Loading…</p>
+      : !list.length ? <p className="muted" style={{ margin: '6px 0 0' }}>No headings found{note.file ? '' : ' (re-upload to build the index)'}.</p>
+      : <ol style={{ margin: '6px 0 0', paddingLeft: 18, maxHeight: 180, overflow: 'auto', color: 'var(--ink-2)' }}>
+          {list.map((t, i) => <li key={i} style={{ margin: '2px 0' }}>{t.title} <span className="muted num" style={{ fontSize: 11.5 }}>{unit} {t.from}{t.to > t.from ? `–${t.to}` : ''}</span></li>)}
+        </ol>}
+  </details>;
+}
+
+// Same list as the server's TYPES. Images and scanned PDFs are read by the AI, which uses credits.
 const ACCEPT = '.pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,.webp';
 const ext = name => name.split('.').pop().toLowerCase();
 
@@ -113,7 +127,7 @@ export default function Notes({ setCredits }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button disabled={busy}>{busy ? 'Reading and indexing…' : 'Add to library'}</button>
         {err ? <span role="alert" className="err" style={{ fontSize: 14 }}>{err}</span>
-          : <span className="muted" style={{ fontSize: 13 }}>{file && /^(png|jpe?g|webp)$/.test(ext(file.name)) ? 'Images are read by the AI, which uses a few tokens per page.' : 'Indexing text is free. Images and scanned PDFs use a few tokens to read.'}</span>}
+          : <span className="muted" style={{ fontSize: 13 }}>{file && /^(png|jpe?g|webp)$/.test(ext(file.name)) ? 'Images are read by the AI, which uses a few credits per page.' : 'Indexing text is free. Images and scanned PDFs use a few credits to read.'}</span>}
       </div>
     </form>
 
@@ -143,6 +157,7 @@ export default function Notes({ setCredits }) {
             <span className="tag">{n.source || 'note'}</span>
           </div>
           {n.excerpt && <p className="excerpt">{n.excerpt}{n.excerpt.length >= 220 && '…'}</p>}
+          {n.pages > 1 && <Contents note={n} />}
           <footer>
             {confirming === n._id
               ? <><span style={{ color: 'var(--bad)', marginRight: 'auto' }}>Delete this note?</span>

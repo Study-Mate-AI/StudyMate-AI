@@ -205,3 +205,19 @@ Measured with real Gemini (`gemini-3.5-flash`) on Research Methodology notes:
 - `GEMINI_MODEL` is now an ordered list, default `gemini-3.5-flash-lite,gemini-3.5-flash`. Each model has its own daily quota; on 429 the next model is used. Flash-Lite has higher free limits, is cheaper, doesn't think by default, and rejects `thinkingBudget` (so it gets no thinking config).
 - LiteLLM: `chat` = flash-lite, `chat-backup` = flash (`reasoning_effort: disable` set per model in config.yaml), with `fallbacks: [{ chat: [chat-backup] }]`.
 - Verified with the real key while flash's quota was used up: chat + quiz JSON work directly, through LiteLLM, and with flash listed first (falls back to lite). End-to-end tutor answer (110 tokens) + 5-question quiz passed.
+
+### Landing page pricing matches Razorpay (₹)
+- New public `GET /api/plans` returns the checkout prices (`PACK_PRICE_INR` / `PRO_PRICE_INR`) and credit amounts. The landing page reads it, so the two can't drift apart again (defaults ₹399 / ₹749 if the call fails).
+- Landing: Free ₹0 / Credit pack ₹399 / Pro ₹749 per month. Pro is described as "no auto-renewal, buy a month when you need it" (was "cancel anytime"). Payment note: rupees, card / UPI ID / UPI app / UPI QR via Razorpay. FAQ: "How does Pro work?" and "How can I pay?". Signup credits shown from the server.
+- Wallet Free plan ₹0 (was $0). README payment lines say credits.
+- Verified in the browser: no "$" prices left anywhere on the page, no page errors.
+
+## 2026-10-14
+
+### Settings: editable profile, Log out moved
+- Sidebar: no Log out button any more; it's under Settings → Log out. The sidebar profile (avatar + name) links to Settings.
+- Settings → Profile: view or edit **full name, date of birth, phone, college/university, course/branch, year/semester**. Email is shown but read-only (it's the login). The sidebar shows the name, falling back to the part of the email before "@".
+- `PUT /api/profile` + `server/profile.js` `cleanProfile()`: only these six fields are accepted (no email/credits etc.). Text is trimmed with length limits, phone must look like a number, and the date of birth must be a real date for an age of 5–100. Empty fields are removed. `check.js` covers it.
+- Fix: login/signup now return the same account fields as `GET /api/me` (shared `me()`). Right after signup, Settings showed "Member since —" and "You signed in with Google" for email accounts until a reload.
+- Verified in the browser against Atlas: 11/11 checks (no sidebar logout, invalid phone rejected, profile saved and shown, name in sidebar, survives reload, Settings logout → landing page, no page errors).
+- Removed leftover data from earlier interrupted test runs (test accounts' chunks, sessions, quizzes, topics, stored files).

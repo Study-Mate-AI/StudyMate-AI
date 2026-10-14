@@ -45,7 +45,7 @@ const rows = [
   { subject: 'Chem', topic: 'Acids', difficulty: 'Medium', score: 3, total: 10, at: at(5) },
 ];
 const r = analyze(rows);
-assert.deepEqual(r.totals, { attempts: 5, accuracy: 18 / 30, questions: 30, correct: 18 });
+assert.deepEqual(r.totals, { attempts: 5, accuracy: 18 / 30, questions: 30, correct: 18, avgSecs: 0, secsPerQuestion: 0 });
 assert.equal(r.topics[0].topic, 'Acids');                // weakest first
 assert.equal(r.topics[0].weak, true);
 const cells = r.topics[1];
@@ -54,7 +54,7 @@ assert.equal(cells.attempts, 4);
 assert.ok(Math.abs(cells.change - 0.6) < 1e-9);          // 20% -> 80%
 assert.equal(r.byDifficulty.Hard.accuracy, 0.9);
 assert.equal(r.byDifficulty.Medium.attempts, 1);
-assert.deepEqual(analyze([]).totals, { attempts: 0, accuracy: 0, questions: 0, correct: 0 });
+assert.deepEqual(analyze([]).totals, { attempts: 0, accuracy: 0, questions: 0, correct: 0, avgSecs: 0, secsPerQuestion: 0 });
 
 // key pool: round-robin, failover on 429/503/403, real errors not retried
 const key = ai => ai.models.apiClient.getApiKey();
@@ -100,6 +100,56 @@ assert.throws(() => docxText(pptx));                                   // a .ppt
 const { pagesOf } = await import('./ai.js');
 assert.deepEqual(pagesOf('=== PAGE 1 ===\nIntro\n=== PAGE 2 ===\n\n=== PAGE 3 ===\nEnd'), ['Intro', '', 'End']);
 assert.deepEqual(pagesOf('Just one image of text'), ['Just one image of text']);
+
+// topicsOf: page headings → contents index; running headers (same line on most pages) and page numbers skipped
+{
+  const { topicsOf } = await import('./ai.js');
+  const hdr = 'Data Mining Unit 2';
+  const pages = [
+    `${hdr}\nClassification\nA classifier assigns labels.`,
+    `${hdr}\nClassification\nDecision trees split on features.`,
+    `${hdr}\n12\nClustering\nk-means groups points.`,
+    `${hdr}\nAssociation Rules\nApriori finds itemsets.`,
+    `${hdr}`,
+  ];
+  assert.deepEqual(topicsOf(pages), [
+    { title: 'Classification', from: 1, to: 2 },
+    { title: 'Clustering', from: 3, to: 3 },
+    { title: 'Association Rules', from: 4, to: 5 },   // a page with no heading belongs to the topic before it
+  ]);
+  assert.deepEqual(topicsOf(['Intro\nhello', 'Methods\nworld']), [{ title: 'Intro', from: 1, to: 1 }, { title: 'Methods', from: 2, to: 2 }]);
+  assert.deepEqual(topicsOf(['', '']), []);
+}
+
+// analyze: time per quiz attempt (secs 0 = unknown, ignored)
+{
+  const { analyze } = await import('./ai.js');
+  const r = analyze([
+    { subject: 'S', topic: 'T', difficulty: 'Easy', score: 4, total: 5, secs: 100, at: new Date(1) },
+    { subject: 'S', topic: 'T', difficulty: 'Easy', score: 5, total: 5, secs: 50, at: new Date(2) },
+    { subject: 'S', topic: 'U', difficulty: 'Hard', score: 1, total: 10, secs: 0, at: new Date(3) },
+  ]);
+  assert.equal(r.totals.avgSecs, 75);
+  assert.equal(r.totals.secsPerQuestion, 15);   // 150 s over 10 timed questions
+  assert.equal(r.topics.find(t => t.topic === 'T').avgSecs, 75);
+  assert.equal(r.topics.find(t => t.topic === 'U').avgSecs, 0);
+}
+
+// cleanProfile: trims, drops empty fields, validates phone and date of birth
+{
+  const { cleanProfile } = await import('./profile.js');
+  const today = new Date('2026-10-14');
+  assert.deepEqual(cleanProfile({ name: '  Shrikant   Rathod ', college: '', phone: '+91 98765-43210', birthDate: '2004-05-17', year: '4th year' }, today).profile,
+    { name: 'Shrikant Rathod', year: '4th year', phone: '+91 98765-43210', birthDate: '2004-05-17' });
+  assert.deepEqual(cleanProfile({}, today).profile, {});
+  assert.ok(cleanProfile({ birthDate: '2001-02-30' }, today).error);      // not a real date
+  assert.ok(cleanProfile({ birthDate: '2030-01-01' }, today).error);      // future
+  assert.ok(cleanProfile({ birthDate: '17/05/2004' }, today).error);      // wrong format
+  assert.ok(cleanProfile({ phone: 'call me' }, today).error);
+  assert.ok(cleanProfile({ phone: '12' }, today).error);
+  assert.ok(cleanProfile({ name: 'x'.repeat(81) }, today).error);
+  assert.deepEqual(cleanProfile({ name: 42, email: 'hack@x.com', credits: 999999 }, today).profile, {}); // only known text fields
+}
 
 console.log('ok');
 

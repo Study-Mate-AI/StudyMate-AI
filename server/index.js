@@ -8,10 +8,11 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { randomBytes, createHash } from 'node:crypto';
 import nodemailer from 'nodemailer';
-import { MongoClient, ObjectId } from 'mongodb';
+import { MongoClient, ObjectId, GridFSBucket } from 'mongodb';
 import pdf from 'pdf-parse/lib/pdf-parse.js'; // lib path: the package root runs a debug test under ESM
-import { chunk, cited, embed, generate, readFile, grade, clean, analyze, charge, quizSchema, DIMS } from './ai.js';
+import { chunk, cited, embed, generate, readFile, grade, clean, analyze, charge, topicsOf, cosine, quizSchema, DIMS } from './ai.js';
 import { docxText, pptxSlides } from './extract.js';
+import { cleanProfile } from './profile.js';
 import billing, { razorpay, PACK, PRO, RZP_PRICE } from './billing.js';
 
 const { MONGODB_URI, JWT_SECRET, PORT = 3000, SMTP_URL, MAIL_FROM = 'StudyMate <no-reply@studymate.local>', APP_URL = 'http://localhost:5173' } = process.env;
@@ -23,10 +24,16 @@ const chunks = db.collection('chunks');
 const convos = db.collection('conversations');
 const quizzes = db.collection('quizzes');
 const ledger = db.collection('ledger');
+const topics = db.collection('topics'); // contents index per note: heading → page range, with an embedding
+const files = new GridFSBucket(db, { bucketName: 'files' }); // original PDFs/images, for showing the cited page
+const SIGNUP_BONUS = 500; // tokens = 5 credits (1 credit = 100 tokens; the client shows credits)
 
 await users.createIndex({ email: 1 }, { unique: true });
 await ledger.createIndex({ userId: 1, at: -1 });
-await convos.createIndex({ userId: 1, subject: 1 }, { unique: true });
+// Tutor sessions: several conversations per subject (the old index allowed one per subject).
+await convos.dropIndex('userId_1_subject_1').catch(() => {});
+await convos.createIndex({ userId: 1, subject: 1, updatedAt: -1 });
+await topics.createIndex({ userId: 1, subject: 1 });
 await quizzes.createIndex({ userId: 1, at: -1 });
 await chunks.createSearchIndex({
   name: 'vec', type: 'vectorSearch',
@@ -54,8 +61,10 @@ const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 // ---------- auth ----------
 const cookieOpts = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 7 * 864e5 };
 // sv = session version: a password reset bumps it, which logs out every older cookie.
-const login = (res, u) => res.cookie('token', jwt.sign({ id: u._id, sv: u.sv ?? 0 }, JWT_SECRET, { expiresIn: '7d' }), cookieOpts)
-  .json({ id: u._id, email: u.email, credits: u.credits, plan: u.plan });
+// Same account shape as GET /api/me, so pages don't miss fields until a reload.
+const me = u => ({ id: u._id, email: u.email, credits: u.credits, plan: u.plan, google: !!u.google, hasPassword: !!u.passwordHash,
+  createdAt: u._id.getTimestamp(), profile: u.profile ?? {} });
+const login = (res, u) => res.cookie('token', jwt.sign({ id: u._id, sv: u.sv ?? 0 }, JWT_SECRET, { expiresIn: '7d' }), cookieOpts).json(me(u));
 
 async function auth(req, res, next) {
   let t;
@@ -70,7 +79,7 @@ const sha = t => createHash('sha256').update(t).digest('hex');
 const mailer = SMTP_URL && nodemailer.createTransport(SMTP_URL);
 async function hasCredits(req, res, next) {
   const u = await users.findOne({ _id: req.uid }, { projection: { credits: 1 } });
-  u?.credits > 0 ? next() : bad(res, 'Out of tokens — recharge to continue', 402);
+  u?.credits > 0 ? next() : bad(res, 'Out of credits. Recharge to continue.', 402);
 }
 
 // ponytail: in-memory per-IP limit, fine for one process; move to a Mongo TTL collection if you scale out
@@ -86,7 +95,7 @@ app.post('/api/signup', throttle, async (req, res) => {
   const email = str(req.body.email)?.toLowerCase(), { password } = req.body;
   if (!email?.includes('@') || !validPw(password))
     return bad(res, 'Valid email and an 8–72 character password required');
-  const u = { email, passwordHash: await bcrypt.hash(password, 12), credits: 10000, plan: 'free' };
+  const u = { email, passwordHash: await bcrypt.hash(password, 12), credits: SIGNUP_BONUS, plan: 'free' };
   try { u._id = (await users.insertOne(u)).insertedId; }
   catch (e) { if (e.code === 11000) return bad(res, 'Email already registered', 409); throw e; }
   await ledger.insertOne({ userId: u._id, kind: 'signup', delta: u.credits, at: new Date() });
@@ -100,7 +109,7 @@ app.post('/api/login', throttle, async (req, res) => {
   login(res, u);
 });
 
-// Google sign-in: verify Google's ID token, then log in, or create the account with the usual 10,000 tokens.
+// Google sign-in: verify Google's ID token, then log in, or create the account with the usual 5 free credits.
 // ponytail: tokeninfo is one HTTPS call per sign-in; switch to google-auth-library's verifyIdToken if traffic grows
 app.post('/api/google', throttle, async (req, res) => {
   if (typeof req.body.credential !== 'string') return bad(res, 'Google sign-in failed', 401);
@@ -110,7 +119,7 @@ app.post('/api/google', throttle, async (req, res) => {
   const email = t.email.toLowerCase();
   let u = await users.findOne({ email });
   if (!u) {
-    u = { email, credits: 10000, plan: 'free', google: true };
+    u = { email, credits: SIGNUP_BONUS, plan: 'free', google: true };
     try {
       u._id = (await users.insertOne(u)).insertedId;
       await ledger.insertOne({ userId: u._id, kind: 'signup', delta: u.credits, at: new Date() });
@@ -150,26 +159,50 @@ app.post('/api/reset', throttle, async (req, res) => {
 app.post('/api/logout', (req, res) => res.clearCookie('token').json({ ok: true }));
 
 app.get('/api/me', auth, async (req, res) => {
-  const u = await users.findOne({ _id: req.uid }, { projection: { email: 1, credits: 1, plan: 1 } });
-  u ? res.json({ id: u._id, email: u.email, credits: u.credits, plan: u.plan }) : bad(res, 'Not logged in', 401);
+  const u = await users.findOne({ _id: req.uid }, { projection: { email: 1, credits: 1, plan: 1, google: 1, passwordHash: 1, profile: 1 } });
+  u ? res.json(me(u)) : bad(res, 'Not logged in', 401);
+});
+
+// Settings → Profile: name, date of birth, phone, college, course, year. The whole profile is replaced each save.
+app.put('/api/profile', auth, async (req, res) => {
+  const { profile, error } = cleanProfile(req.body);
+  if (error) return bad(res, error);
+  await users.updateOne({ _id: req.uid }, { $set: { profile } });
+  res.json({ profile });
+});
+
+// Settings: change password (Google-only accounts can set a first one). Logs out other devices, keeps this one.
+app.post('/api/password', auth, throttle, async (req, res) => {
+  const u = await users.findOne({ _id: req.uid });
+  if (u.passwordHash && (typeof req.body.current !== 'string' || !(await bcrypt.compare(req.body.current, u.passwordHash))))
+    return bad(res, 'Current password is wrong', 401);
+  if (!validPw(req.body.password)) return bad(res, 'Choose an 8–72 character password');
+  login(res, await users.findOneAndUpdate({ _id: req.uid }, { $set: { passwordHash: await bcrypt.hash(req.body.password, 12) }, $inc: { sv: 1 } }, { returnDocument: 'after' }));
 });
 
 app.use(razorpay(db, auth));
 // ---------- wallet ----------
+// Public plan details for the landing page, from the same settings checkout uses (prices in ₹, credits in tokens).
+app.get('/api/plans', (req, res) => res.json({ prices: RZP_PRICE, tokens: { signup: SIGNUP_BONUS, pack: PACK, pro: PRO } }));
 app.get('/api/wallet', auth, async (req, res) => {
   const since = new Date(Date.now() - 30 * 864e5);
-  const [u, history, spent] = await Promise.all([
+  const [u, history, spent, usage] = await Promise.all([
     users.findOne({ _id: req.uid }, { projection: { credits: 1, plan: 1 } }),
-    ledger.find({ userId: req.uid }, { projection: { _id: 0, kind: 1, delta: 1, at: 1 } }).sort({ at: -1 }).limit(50).toArray(),
+    ledger.find({ userId: req.uid, delta: { $ne: 0 } }, { projection: { _id: 0, kind: 1, delta: 1, at: 1, title: 1 } }).sort({ at: -1 }).limit(50).toArray(),
     ledger.aggregate([
       { $match: { userId: req.uid, delta: { $lt: 0 }, at: { $gte: since } } },
       { $group: { _id: '$kind', tokens: { $sum: { $multiply: ['$delta', -1] } }, calls: { $sum: 1 } } },
+    ]).toArray(),
+    ledger.aggregate([
+      { $match: { userId: req.uid, kind: { $in: ['chat', 'quiz'] } } },
+      { $group: { _id: '$kind', count: { $sum: 1 }, tokens: { $sum: { $multiply: ['$delta', -1] } } } },
     ]).toArray(),
   ]);
   if (!u) return bad(res, 'Not logged in', 401);
   res.json({
     credits: u.credits, plan: u.plan, history, offers: { pack: PACK, pro: PRO }, prices: RZP_PRICE,
     spent30: Object.fromEntries(spent.map(s => [s._id, { tokens: s.tokens, calls: s.calls }])),
+    usage: Object.fromEntries(usage.map(s => [s._id, { count: s.count, tokens: s.tokens }])), // all-time queries
   });
 });
 
@@ -179,9 +212,24 @@ app.get('/api/notes', auth, async (req, res) => {
     { $match: { userId: req.uid } },
     { $sort: { i: 1 } },
     { $group: { _id: '$noteId', title: { $first: '$noteTitle' }, subject: { $first: '$subject' }, chunks: { $sum: 1 }, at: { $first: '$at' },
-      source: { $first: '$source' }, pages: { $first: '$pages' }, excerpt: { $first: { $substrCP: ['$text', 0, 220] } } } },
+      source: { $first: '$source' }, pages: { $first: '$pages' }, file: { $first: '$file' }, excerpt: { $first: { $substrCP: ['$text', 0, 220] } } } },
     { $sort: { at: -1 } },
   ]).toArray());
+});
+
+// The note's contents index (built at upload): headings with their page ranges.
+app.get('/api/notes/:id/topics', auth, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return bad(res, 'Bad id');
+  res.json(await topics.find({ noteId: new ObjectId(req.params.id), userId: req.uid }, { projection: { _id: 0, title: 1, from: 1, to: 1 } }).sort({ from: 1 }).toArray());
+});
+
+// The original PDF/image, so the tutor can show the cited page (browsers open PDFs at #page=N natively).
+app.get('/api/notes/:id/file', auth, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return bad(res, 'Bad id');
+  const [f] = await files.find({ 'metadata.noteId': new ObjectId(req.params.id), 'metadata.userId': req.uid }).limit(1).toArray();
+  if (!f) return bad(res, 'The original file was not kept for this note. Re-upload it to see pages.', 404);
+  res.set({ 'Content-Type': f.metadata.contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' });
+  files.openDownloadStream(f._id).pipe(res);
 });
 
 // Upload types by file extension. Images (and PDFs with no text layer, i.e. scans) are read by Gemini.
@@ -207,53 +255,89 @@ app.post('/api/notes', auth, upload.single('file'), async (req, res) => {
     } catch { return bad(res, "Couldn't read that file. Is it damaged or password-protected?"); }
     // Images and scanned PDFs need Gemini to read them, which uses tokens, so they need a balance.
     if (source === 'image' || (source === 'pdf' && !chunk(input).length)) {
-      if (!(await users.findOne({ _id: req.uid, credits: { $gt: 0 } }))) return bad(res, 'Reading images and scanned PDFs uses AI tokens. Recharge to continue.', 402);
+      if (!(await users.findOne({ _id: req.uid, credits: { $gt: 0 } }))) return bad(res, 'Reading images and scanned PDFs uses credits. Recharge to continue.', 402);
       ({ pages: input, tokens: aiTokens } = await readFile(f.buffer, IMAGE_MIME[ext] || 'application/pdf'));
     }
   }
   const parts = chunk(input);
   if (!parts.length) return bad(res, 'No readable text found in that file');
-  const vectors = await embed(parts.map(p => p.text));
+  const index = pages ? topicsOf(input) : []; // contents: heading → pages
+  const vectors = await embed([...parts.map(p => p.text), ...index.map(t => t.title)]);
   const noteId = new ObjectId(), at = new Date();
+  // ponytail: originals count toward Atlas's 512 MB free storage; move to object storage if that fills up
+  const file = source === 'pdf' || source === 'image';
+  if (file) await new Promise((ok, fail) => files.openUploadStream(f.originalname, { metadata: { userId: req.uid, noteId, contentType: IMAGE_MIME[ext] || 'application/pdf' } })
+    .on('finish', ok).on('error', fail).end(f.buffer));
   await chunks.insertMany(parts.map((p, i) => ({
-    userId: req.uid, noteId, noteTitle: title, subject, source, pages, text: p.text, embedding: vectors[i], i, at,
+    userId: req.uid, noteId, noteTitle: title, subject, source, pages, text: p.text, embedding: vectors[i], i, at, file,
     ...(pages && { page: p.from, pageTo: p.to }), // PDFs and slides: citations show the page/slide
   })));
-  const credits = aiTokens ? await charge(db, req.uid, aiTokens, 'read') : undefined;
-  res.json({ _id: noteId, title, subject, source, pages, chunks: parts.length, credits });
+  if (index.length) await topics.insertMany(index.map((t, k) => ({ userId: req.uid, noteId, subject, ...t, embedding: vectors[parts.length + k] })));
+  const credits = aiTokens ? await charge(db, req.uid, aiTokens, 'read', { title, subject }) : undefined;
+  res.json({ _id: noteId, title, subject, source, pages, chunks: parts.length, topics: index.length, credits });
 });
 app.delete('/api/notes/:id', auth, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return bad(res, 'Bad id');
-  const r = await chunks.deleteMany({ noteId: new ObjectId(req.params.id), userId: req.uid });
+  const noteId = new ObjectId(req.params.id);
+  const r = await chunks.deleteMany({ noteId, userId: req.uid });
+  await topics.deleteMany({ noteId, userId: req.uid });
+  for (const f of await files.find({ 'metadata.noteId': noteId, 'metadata.userId': req.uid }).toArray()) await files.delete(f._id);
   res.json({ deleted: r.deletedCount });
 });
 
+// Retrieval goes through the contents index first: if the question matches a heading, that topic's pages are read
+// directly (by noteId + page range). Vector search over all chunks fills the remaining slots.
+const TOPIC_MATCH = 0.70; // measured: matching heading 0.74–0.80, unrelated ≤ 0.63
+const SRC = { noteId: 1, noteTitle: 1, text: 1, page: 1, pageTo: 1, source: 1, file: 1 };
 async function retrieve(uid, subject, query, limit = 5) {
   const [v] = await embed([query], 'RETRIEVAL_QUERY');
-  return chunks.aggregate([
-    { $vectorSearch: { index: 'vec', path: 'embedding', queryVector: v, numCandidates: 100, limit, filter: { userId: uid, subject } } },
-    { $project: { _id: 0, noteId: 1, noteTitle: 1, text: 1, page: 1, pageTo: 1, score: { $meta: 'vectorSearchScore' } } },
-  ]).toArray();
+  const [hits, heads] = await Promise.all([
+    chunks.aggregate([
+      { $vectorSearch: { index: 'vec', path: 'embedding', queryVector: v, numCandidates: 100, limit, filter: { userId: uid, subject } } },
+      { $project: { ...SRC, score: { $meta: 'vectorSearchScore' } } },
+    ]).toArray(),
+    topics.find({ userId: uid, subject }, { projection: { noteId: 1, title: 1, from: 1, to: 1, embedding: 1 } }).toArray(),
+  ]);
+  const best = heads.map(t => ({ t, s: cosine(v, t.embedding) })).sort((a, b) => b.s - a.s)[0];
+  const direct = best?.s >= TOPIC_MATCH
+    ? (await chunks.find({ userId: uid, noteId: best.t.noteId, page: { $lte: best.t.to }, pageTo: { $gte: best.t.from } }, { projection: SRC }).sort({ i: 1 }).limit(2).toArray())
+      .map(c => ({ ...c, topic: best.t.title, atPage: Math.max(c.page, best.t.from) })) // open the viewer at the topic's page
+    : [];
+  const seen = new Set();
+  return [...direct, ...hits].filter(c => !seen.has(String(c._id)) && seen.add(String(c._id))).slice(0, limit).map(({ _id, ...c }) => c);
 }
 
 // ---------- chat ----------
 const NOT_IN_NOTES = "I don't have that in your notes.";
 const where = s => s.page ? `${s.noteTitle}, p. ${s.page}${s.pageTo > s.page ? `–${s.pageTo}` : ''}` : s.noteTitle;
 
-app.get('/api/chat/:subject', auth, async (req, res) => {
-  const c = await convos.findOne({ userId: req.uid, subject: req.params.subject });
-  res.json(c?.messages ?? []);
+// Sessions: each subject has its own list of conversations. (Older single-conversation docs show up as one session.)
+app.get('/api/sessions', auth, async (req, res) => {
+  res.json(await convos.aggregate([
+    { $match: { userId: req.uid, subject: String(req.query.subject) } },
+    { $sort: { updatedAt: -1, _id: -1 } },
+    { $project: { title: { $ifNull: ['$title', { $first: '$messages.content' }] }, updatedAt: { $ifNull: ['$updatedAt', { $last: '$messages.at' }] }, count: { $size: '$messages' } } },
+  ]).toArray());
 });
-
-app.delete('/api/chat/:subject', auth, async (req, res) => {
-  await convos.deleteOne({ userId: req.uid, subject: req.params.subject });
+app.get('/api/sessions/:id', auth, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return bad(res, 'Bad id');
+  const c = await convos.findOne({ _id: new ObjectId(req.params.id), userId: req.uid });
+  c ? res.json(c.messages) : bad(res, 'Not found', 404);
+});
+app.delete('/api/sessions/:id', auth, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return bad(res, 'Bad id');
+  await convos.deleteOne({ _id: new ObjectId(req.params.id), userId: req.uid });
   res.json({ ok: true });
 });
 
 app.post('/api/chat', auth, hasCredits, async (req, res) => {
   const subject = str(req.body.subject, 80), question = str(req.body.question, 2000);
   if (!subject || !question) return bad(res, 'Subject and question required');
-  const history = (await convos.findOne({ userId: req.uid, subject }, { projection: { messages: { $slice: -4 } } }))?.messages ?? [];
+  // No sessionId = "New chat": the session is created on its first question, titled by it.
+  const sid = ObjectId.isValid(req.body.sessionId) ? new ObjectId(req.body.sessionId) : null;
+  const session = sid && await convos.findOne({ _id: sid, userId: req.uid, subject }, { projection: { messages: { $slice: -4 } } });
+  if (sid && !session) return bad(res, 'Session not found', 404);
+  const history = session?.messages ?? [];
   // A short follow-up ("explain that simpler") has nothing to search on, so it borrows the previous question.
   // ponytail: word-count heuristic, ask Gemini to rewrite the query if follow-ups still miss
   const prev = history.findLast(m => m.role === 'user')?.content;
@@ -277,11 +361,10 @@ STUDENT: ${question}`));
   const marked = sources.map((s, i) => ({ ...s, cited: used.has(i + 1) }));
   const at = new Date();
   // Cap the stored thread so one long conversation can't grow toward Mongo's 16 MB document limit.
-  await convos.updateOne({ userId: req.uid, subject }, { $push: { messages: { $each: [
-    { role: 'user', content: question, at },
-    { role: 'assistant', content: answer, sources: marked, tokens, at },
-  ], $slice: -100 } } }, { upsert: true });
-  res.json({ answer, sources: marked, tokens, credits: await charge(db, req.uid, tokens, 'chat') });
+  const msgs = [{ role: 'user', content: question, at }, { role: 'assistant', content: answer, sources: marked, tokens, at }];
+  const sessionId = session ? sid : (await convos.insertOne({ userId: req.uid, subject, title: question.slice(0, 80), messages: [], at, updatedAt: at })).insertedId;
+  await convos.updateOne({ _id: sessionId }, { $push: { messages: { $each: msgs, $slice: -100 } }, $set: { updatedAt: at } });
+  res.json({ answer, sources: marked, tokens, sessionId, credits: await charge(db, req.uid, tokens, 'chat', { title: question.slice(0, 120), subject }) });
 });
 
 // ---------- quizzes ----------
@@ -302,11 +385,11 @@ app.post('/api/quiz', auth, hasCredits, async (req, res) => {
 Each has exactly 4 distinct options and exactly one correct option; "answer" is the 0-based index of the correct option.
 "explanation" walks through the reasoning step by step as 2-4 short numbered lines ("1. ...\n2. ..."), ending with why the correct option is right${grounded ? ', and cites the notes' : ''}.
 ${grounded ? `\nNOTES:\n${sources.map(s => s.text).join('\n\n')}` : ''}`, quizSchema);
-  const credits = await charge(db, req.uid, tokens, 'quiz');
+  const credits = await charge(db, req.uid, tokens, 'quiz', { title: topic, subject, difficulty });
   let questions;
   try { questions = clean(JSON.parse(text)).slice(0, n); } catch { questions = []; }
   if (!questions.length) return bad(res, 'Quiz generation failed, try again', 502);
-  const quiz = { userId: req.uid, subject, topic, difficulty, grounded, questions, attempts: [], at: new Date() };
+  const quiz = { userId: req.uid, subject, topic, difficulty, grounded, questions, attempts: [], tokens, at: new Date() };
   quiz._id = (await quizzes.insertOne(quiz)).insertedId;
   res.json({ ...hideAnswers(quiz), credits });
 });
@@ -344,14 +427,33 @@ app.post('/api/quiz/:id/attempt', auth, async (req, res) => {
 });
 
 // ---------- analytics ----------
+// Time for one attempt: first attempt = from quiz generated to submitted; retakes = the test-room timer.
+const attemptSecs = { $cond: [{ $eq: ['$n', 0] }, { $round: [{ $divide: [{ $subtract: ['$attempts.at', '$at'] }, 1000] }, 0] }, '$attempts.secs'] };
 app.get('/api/stats', auth, async (req, res) => {
   const rows = await quizzes.aggregate([
     { $match: { userId: req.uid } },
-    { $unwind: '$attempts' },
-    { $project: { _id: 0, quizId: '$_id', subject: 1, topic: 1, difficulty: 1, at: '$attempts.at', score: '$attempts.score', total: { $size: '$questions' } } },
+    { $unwind: { path: '$attempts', includeArrayIndex: 'n' } },
+    { $project: { _id: 0, quizId: '$_id', subject: 1, topic: 1, difficulty: 1, at: '$attempts.at', score: '$attempts.score', total: { $size: '$questions' }, secs: attemptSecs } },
     { $sort: { at: 1 } },
   ]).toArray();
   res.json(analyze(rows));
+});
+
+// History for the Progress page: every tutor question and quiz, newest first.
+app.get('/api/history', auth, async (req, res) => {
+  const [asked, tried] = await Promise.all([
+    ledger.find({ userId: req.uid, kind: { $in: ['chat', 'read'] } }).sort({ at: -1 }).limit(500).toArray(),
+    quizzes.aggregate([
+      { $match: { userId: req.uid } },
+      { $unwind: { path: '$attempts', includeArrayIndex: 'n', preserveNullAndEmptyArrays: true } },
+      { $project: { _id: 0, type: 'quiz', quizId: '$_id', title: '$topic', subject: 1, difficulty: 1, score: '$attempts.score', total: { $size: '$questions' },
+        secs: attemptSecs, at: { $ifNull: ['$attempts.at', '$at'] }, tokens: { $cond: [{ $lte: [{ $ifNull: ['$n', 0] }, 0] }, '$tokens', 0] } } },
+      { $sort: { at: -1 } }, { $limit: 500 },
+    ]).toArray(),
+  ]);
+  const rows = [...asked.map(l => ({ type: l.kind === 'chat' ? 'tutor' : 'upload', title: l.title || (l.kind === 'chat' ? 'Tutor question' : 'File read by AI'),
+    subject: l.subject, tokens: -l.delta, at: l.at })), ...tried];
+  res.json(rows.sort((a, b) => b.at - a.at).slice(0, 500));
 });
 
 // Production: serve the built client from the same origin.

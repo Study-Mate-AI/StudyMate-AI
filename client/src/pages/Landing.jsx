@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { GoogleButton, ThemeToggle, useTween } from '../App.jsx';
+import { api, cr, GoogleButton, ThemeToggle, useTween } from '../App.jsx';
 
-const PRICE = { pack: import.meta.env.VITE_PACK_PRICE || '$5', pro: import.meta.env.VITE_PRO_PRICE || '$9' };
+// Defaults match server/billing.js; the real values come from /api/plans (the same settings Razorpay checkout uses).
+const PLANS = { prices: { pack: 399, pro: 749 }, tokens: { signup: 500, pack: 50000, pro: 200000 } };
+const inr = n => '₹' + Number(n).toLocaleString('en-IN');
 
 const css = `
 .lp { overflow-x: clip; }
@@ -148,7 +150,7 @@ const FEATURES = [
     demo: <span>Mitochondria make ATP <span className="cite">p. 3</span> through respiration <span className="cite">p. 4</span></span> },
   { icon: 'M9 11l3 3 8-8 M20 12v7H4V5h11', title: 'Quizzes in seconds', text: 'Easy, Medium or Hard multiple-choice quizzes on any topic, written from your own material.' },
   { icon: 'M12 8v4l3 2 M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18', title: 'Instant grading', text: 'Submit and see your score, the right answers and a step-by-step explanation for each question.' },
-  { icon: 'M3 7h18v12H3z M3 7l3-4h12l3 4 M16 13h2', title: 'Fair token wallet', text: 'Pay only for the AI you use. Uploading notes and taking quizzes cost nothing.' },
+  { icon: 'M3 7h18v12H3z M3 7l3-4h12l3 4 M16 13h2', title: 'Fair credit wallet', text: 'Pay only for the AI you use (1 credit = 100 AI tokens). Uploading notes and taking quizzes cost nothing.' },
   { full: true, icon: 'M4 19V9 M10 19V5 M16 19v-7 M22 19H2', title: 'Weak-topic radar', text: 'Topics where your recent scores average under 70% get flagged, with one click to practise them.',
     demo: <div style={{ display: 'grid', gap: 8 }}>{[['Sampling', 42, 'var(--bad)'], ['Hypothesis testing', 64, 'var(--warn)'], ['Research design', 88, 'var(--good)']].map(([t, w, c]) =>
       <div key={t}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{t}</span><span className="num">{w}%</span></div><div className="bar"><i style={{ '--w': w + '%', background: c }} /></div></div>)}</div> },
@@ -162,9 +164,10 @@ const STEPS = [
 
 const FAQ = [
   ['Does the AI use the internet to answer?', "No. The tutor only answers from the notes you upload, and says so when your notes don't cover a question. Every fact links back to the page it came from."],
-  ['What are tokens?', 'Tokens measure AI usage. You get 10,000 free when you sign up, which is about 15 tutor answers or 7 quizzes. Uploading notes and taking quizzes are free.'],
-  ['What files can I upload?', 'PDFs, Word (.docx), PowerPoint (.pptx), text files and photos of handwritten or printed notes (PNG, JPG, WebP). Photos and scanned PDFs are read by the AI, which uses a few tokens; everything else is indexed free.'],
-  ['Is Pro a one-time payment?', 'Pro is monthly: 200,000 tokens every month, unused tokens carry over, and you can cancel anytime. Token packs are one-time purchases that never expire.'],
+  ['What are credits?', 'Credits pay for AI usage: 1 credit = 100 AI tokens, and each request is charged for what it actually uses. You get 5 free credits when you sign up. Questions your notes cannot answer, uploading text notes and taking quizzes are free. Top up anytime.'],
+  ['What files can I upload?', 'PDFs, Word (.docx), PowerPoint (.pptx), text files and photos of handwritten or printed notes (PNG, JPG, WebP). Photos and scanned PDFs are read by the AI, which uses a few credits; everything else is indexed free.'],
+  ['How does Pro work?', 'Pro is bought one month at a time: you get that month’s credits straight away and unused credits carry over. It never renews or charges you automatically, so there is nothing to cancel; buy another month whenever you want. Credit packs are one-time top-ups that never expire.'],
+  ['How can I pay?', 'Prices are in Indian rupees. Pay securely through Razorpay with a debit or credit card, a UPI ID or UPI app, or by scanning a UPI QR code.'],
 ];
 
 const Icon = ({ d }) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>;
@@ -204,6 +207,9 @@ function Counter({ to, suffix = '' }) {
 
 export default function Landing({ onLogin }) {
   const [scrolled, setScrolled] = useState(false);
+  const [plans, setPlans] = useState(PLANS);
+  useEffect(() => { api('/plans').then(setPlans, () => {}); }, []);
+  const { prices, tokens } = plans;
   const stage = useRef();
   useReveal();
   useEffect(() => {
@@ -247,7 +253,7 @@ export default function Landing({ onLogin }) {
         </h1>
         <p className="lede fade-up" style={{ '--d': '700ms' }}>Upload your lecture notes and StudyMate turns them into a personal tutor, instant quizzes and a progress report that tells you exactly what to revise.</p>
         <div className="ctas fade-up" style={{ '--d': '850ms' }}>
-          <Link to="/signup" className="btn lg shine">Get 10,000 free tokens →</Link>
+          <Link to="/signup" className="btn lg shine">Start free with {cr(tokens.signup)} credits →</Link>
           <a href="#how" className="btn ghost lg">See how it works</a>
         </div>
         <div className="fade-up" style={{ '--d': '950ms', marginTop: 16 }}><GoogleButton onLogin={onLogin} /></div>
@@ -298,8 +304,8 @@ export default function Landing({ onLogin }) {
 
     <section style={{ paddingTop: 0 }}>
       <div className="stats" data-reveal>
-        <div><Counter to={10000} /><span>free tokens on signup</span></div>
-        <div><Counter to={15} /><span>tutor answers on the free balance</span></div>
+        <div><Counter to={tokens.signup / 100} /><span>free credits on signup</span></div>
+        <div><Counter to={100} /><span>AI tokens per credit</span></div>
         <div><Counter to={3} /><span>difficulty levels per quiz</span></div>
         <div><Counter to={100} suffix="%" /><span>answers grounded in your notes</span></div>
       </div>
@@ -310,9 +316,9 @@ export default function Landing({ onLogin }) {
       <h2 data-reveal style={{ '--d': '80ms' }}>Start free. <em>Top up</em> when you need to.</h2>
       <div className="plans">
         {[
-          { t: 'Free', p: '$0', n: 'to start', pts: ['10,000 tokens on signup', 'Every feature included', 'Top up anytime'] },
-          { t: 'Token pack', p: PRICE.pack, n: 'one-time', pts: ['50,000 tokens', 'Never expire', 'Stacks with any plan'] },
-          { t: 'Pro', p: PRICE.pro, n: 'per month', hot: true, pts: ['200,000 tokens every month', 'Unused tokens carry over', 'Cancel anytime'] },
+          { t: 'Free', p: inr(0), n: 'to start', pts: [`${cr(tokens.signup)} credits on signup`, 'Every feature included', 'Top up anytime'] },
+          { t: 'Credit pack', p: inr(prices.pack), n: 'one-time', pts: [`${cr(tokens.pack)} credits`, 'Never expire', 'Stacks with any plan'] },
+          { t: 'Pro', p: inr(prices.pro), n: 'per month', hot: true, pts: [`${cr(tokens.pro)} credits for the month`, 'Unused credits carry over', 'No auto-renewal, buy a month when you need it'] },
         ].map((x, i) => <div key={x.t} className={'plan' + (x.hot ? ' hot' : '')} data-reveal style={{ '--d': i * 120 + 'ms' }}>
           <strong>{x.t}</strong>
           <div><span className="price">{x.p}</span> <span className="muted">{x.n}</span></div>
@@ -320,6 +326,7 @@ export default function Landing({ onLogin }) {
           <Link to="/signup" className={'btn' + (x.hot ? ' accent' : ' ghost')}>{x.hot ? 'Start free, upgrade later' : 'Get started'}</Link>
         </div>)}
       </div>
+      <p className="muted" data-reveal style={{ fontSize: 13, marginTop: 16 }}>Prices in Indian rupees · Pay by card, UPI ID / UPI app or UPI QR code · Secured by Razorpay · 1 credit = 100 AI tokens</p>
     </section>
 
     <section id="faq" style={{ paddingTop: 0 }}>

@@ -86,9 +86,9 @@ StudyMate AI is different:
 - **Weak topic = last 3 attempts average below 70%.** Each weak topic gets a **Practice →** button that pre-fills a new quiz.
 
 ### 9. Billing (recharge)
-- **Token pack** (one-time) and **Pro** (one month of tokens) via **Razorpay Checkout**.
+- **Credit pack** (one-time, ₹399) and **Pro** (one month of credits, ₹749, no auto-renewal) via **Razorpay Checkout**.
 - Pay by **card, UPI ID / UPI app, or UPI QR code**.
-- The server verifies Razorpay's **HMAC signature** before adding tokens, and each order can add tokens only once.
+- The server verifies Razorpay's **HMAC signature** before adding credits, and each order can add credits only once.
 
 **Also included:** a public landing page, light/dark theme toggle, a mobile-friendly layout (tested at 375 px), and reduced-motion support.
 
@@ -265,7 +265,7 @@ Stop it with `docker compose down`. Remove the two `LITELLM_*` lines to call Gem
 4. Restart the server and open **Wallet → Buy tokens**.
 5. Test with UPI ID `success@razorpay` or a Razorpay test card.
 
-**How it's secured:** the server creates the order, so the price can't be changed in the browser. After payment it checks Razorpay's HMAC-SHA256 signature, and each order can add tokens only once.
+**How it's secured:** the server creates the order, so the price can't be changed in the browser. After payment it checks Razorpay's HMAC-SHA256 signature, and each order can add credits only once.
 
 ---
 

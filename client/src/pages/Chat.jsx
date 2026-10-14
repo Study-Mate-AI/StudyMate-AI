@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, useSubjects, hueOf } from '../App.jsx';
+import { api, useSubjects, hueOf, cr, ago } from '../App.jsx';
 
 const css = `
 .thread { display: grid; gap: 14px; margin: 24px 0 8px; }
@@ -34,6 +34,26 @@ const css = `
 @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 `;
 
+const sessCss = `
+main:has(.chat-layout) { max-width: 1180px; }
+.chat-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 24px; align-items: start; }
+.sessions { position: sticky; top: 16px; display: grid; gap: 4px; max-height: calc(100dvh - 32px); overflow: auto; }
+.sess { display: flex; align-items: center; gap: 6px; border-radius: 8px; }
+.sess a { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; color: var(--ink-2); text-decoration: none; font-size: 13.5px; }
+.sess a span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess a small { color: var(--ink-3); font-size: 11.5px; }
+.sess:hover, .sess.on { background: var(--line); } .sess.on a { color: var(--ink); }
+.sess .del { opacity: 0; padding: 4px 7px; font-size: 12px; background: transparent; color: var(--ink-3); border: 0; }
+.sess:hover .del, .sess .del:focus-visible { opacity: 1; } .sess .del:hover { color: var(--bad); }
+.pagebox { width: 100%; height: 520px; border: 1px solid var(--line); border-radius: 8px; background: #fff; margin-top: 8px; }
+@media (max-width: 900px) {
+  .chat-layout { grid-template-columns: 1fr; }
+  .sessions { position: static; display: flex; overflow-x: auto; max-height: none; padding-bottom: 4px; }
+  .sess { flex: none; max-width: 220px; }
+  .pagebox { height: 420px; }
+}
+`;
+
 const starters = s => [`Summarise the key ideas in my ${s} notes`, 'What are the most important definitions?', 'Explain the hardest concept simply', 'What should I revise before the exam?'];
 const where = s => s.page ? `${s.noteTitle} · p. ${s.page}${s.pageTo > s.page ? `–${s.pageTo}` : ''}` : s.noteTitle;
 
@@ -46,16 +66,25 @@ export default function Chat({ setCredits }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(null); // "message:source" whose excerpt is showing
-  const [clearing, setClearing] = useState(false);
+  const [deleting, setDeleting] = useState(null); // session id awaiting delete confirmation
   const [more, setMore] = useState(null); // message whose unused sources are expanded
+  const [sessions, setSessions] = useState(null);
+  const sessionId = params.get('s'); // open session; none = a new chat
   const end = useRef();
   const box = useRef();
+  const skip = useRef(false); // a just-created session already has its messages on screen
+  const go = (s, sid) => setParams(sid ? { subject: s, s: sid } : { subject: s }, { replace: true });
 
+  const loadSessions = () => subject && api('/sessions?subject=' + encodeURIComponent(subject)).then(setSessions, () => setSessions([]));
+  useEffect(() => { setSessions(null); loadSessions(); }, [subject]);
   useEffect(() => {
     if (!subject) return;
-    setMessages(null); setOpen(null); setClearing(false); setErr('');
-    api('/chat/' + encodeURIComponent(subject)).then(setMessages, x => { setErr(x.message); setMessages([]); });
-  }, [subject]);
+    setOpen(null); setErr(''); setDeleting(null);
+    if (!sessionId) return setMessages([]);
+    if (skip.current) { skip.current = false; return; }
+    setMessages(null);
+    api('/sessions/' + sessionId).then(setMessages, x => { setErr(x.message); setMessages([]); });
+  }, [subject, sessionId]);
   useEffect(() => { if (messages?.length) end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages?.length, busy]);
 
   const send = async q => {
@@ -64,16 +93,18 @@ export default function Chat({ setCredits }) {
     setBusy(true); setErr(''); setDraft('');
     setMessages(m => [...m, { role: 'user', content: q }]);
     try {
-      const r = await api('/chat', { body: { subject, question: q } });
+      const r = await api('/chat', { body: { subject, question: q, sessionId } });
       setMessages(m => [...m, { role: 'assistant', content: r.answer, sources: r.sources, tokens: r.tokens }]);
       setCredits(r.credits);
+      if (r.sessionId !== sessionId) { skip.current = true; go(subject, r.sessionId); }
+      loadSessions();
     } catch (x) {
       setErr(x.message); setDraft(q); setMessages(m => m.slice(0, -1)); // put the question back so it can be resent
     }
     setBusy(false);
     box.current?.focus();
   };
-  const clear = async () => { await api('/chat/' + encodeURIComponent(subject), { method: 'DELETE' }); setMessages([]); setClearing(false); };
+  const remove = async id => { await api('/sessions/' + id, { method: 'DELETE' }); setDeleting(null); if (id === sessionId) go(subject); loadSessions(); };
   const toggle = key => setOpen(o => o === key ? null : key);
 
   if (!subjects.length) return <>
@@ -87,23 +118,32 @@ export default function Chat({ setCredits }) {
   </>;
 
   return <>
-    <style>{css}</style>
-    <div style={{ display: 'flex', alignItems: 'end', gap: 12, flexWrap: 'wrap' }}>
-      <div style={{ flex: 1 }}>
-        <p className="eyebrow">Tutor</p>
-        <h2 style={{ marginBottom: 0 }}>Ask your <em>notes</em></h2>
-      </div>
-      {messages?.length > 0 && (clearing
-        ? <span style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>Clear this chat?
-            <button className="ghost" onClick={() => setClearing(false)} style={{ padding: '5px 10px' }}>Cancel</button>
-            <button onClick={clear} style={{ padding: '5px 10px', background: 'var(--bad)', borderColor: 'var(--bad)', color: '#fff' }}>Clear</button></span>
-        : <button className="ghost" onClick={() => setClearing(true)} disabled={busy} style={{ padding: '6px 11px', fontSize: 13 }}>Clear chat</button>)}
+    <style>{css + sessCss}</style>
+    <p className="eyebrow">Tutor</p>
+    <h2 style={{ marginBottom: 0 }}>Ask your <em>notes</em></h2>
+
+    <div role="group" aria-label="Subject" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '18px 0 20px' }}>
+      {subjects.map(s => <button key={s} className="chip tint" style={{ '--h': hueOf(subjects, s) }} aria-pressed={s === subject} disabled={busy}
+        onClick={() => go(s)}><span className="dot" />{s}</button>)}
     </div>
 
-    <div role="group" aria-label="Subject" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 18 }}>
-      {subjects.map(s => <button key={s} className="chip tint" style={{ '--h': hueOf(subjects, s) }} aria-pressed={s === subject} disabled={busy}
-        onClick={() => setParams({ subject: s }, { replace: true })}><span className="dot" />{s}</button>)}
-    </div>
+    <div className="chat-layout">
+    <nav className="sessions" aria-label={`${subject} sessions`}>
+      <button className={sessionId ? 'ghost' : ''} onClick={() => go(subject)} disabled={busy} style={{ marginBottom: 6, flex: 'none' }}>+ New chat</button>
+      {sessions === null ? <span className="muted" style={{ fontSize: 13, padding: 8 }}>Loading…</span>
+        : !sessions.length ? <span className="muted" style={{ fontSize: 13, padding: 8 }}>No sessions yet. Your first question starts one.</span>
+        : sessions.map(s => <div key={s._id} className={'sess' + (s._id === sessionId ? ' on' : '')}>
+          {deleting === s._id
+            ? <span style={{ display: 'flex', gap: 4, alignItems: 'center', padding: '6px 8px', fontSize: 12.5, flex: 1 }}>Delete?
+                <button className="ghost" onClick={() => setDeleting(null)} style={{ padding: '3px 8px', fontSize: 12 }}>No</button>
+                <button onClick={() => remove(s._id)} style={{ padding: '3px 8px', fontSize: 12, background: 'var(--bad)', borderColor: 'var(--bad)', color: '#fff' }}>Yes</button></span>
+            : <><a href={`?subject=${encodeURIComponent(subject)}&s=${s._id}`} onClick={e => { e.preventDefault(); if (!busy) go(subject, s._id); }} aria-current={s._id === sessionId ? 'page' : undefined}>
+                <span>{s.title || 'Untitled chat'}</span><small>{s.updatedAt ? ago(s.updatedAt) : ''} · {Math.ceil(s.count / 2)} question{Math.ceil(s.count / 2) === 1 ? '' : 's'}</small>
+              </a>
+              <button className="del" onClick={() => setDeleting(s._id)} aria-label={`Delete session: ${s.title}`} title="Delete session">✕</button></>}
+        </div>)}
+    </nav>
+    <div style={{ minWidth: 0 }}>
 
     {messages === null ? <p className="muted">Loading…</p> : <div className="thread" aria-live="polite">
       {!messages.length && <div className="card rise" style={{ padding: 22 }}>
@@ -123,10 +163,17 @@ export default function Chat({ setCredits }) {
               </button>)}
               {more !== i && m.sources.some(s => s.cited === false) && <button className="src" onClick={() => setMore(i)} style={{ paddingLeft: 9 }}
                 title="Notes the search found but the answer didn't use">+{m.sources.filter(s => s.cited === false).length} more</button>}
-              {m.tokens > 0 && <span className="muted num" style={{ marginLeft: 'auto', fontSize: 12, alignSelf: 'center' }}>{m.tokens.toLocaleString()} tokens</span>}
+              {m.tokens > 0 && <span className="muted num" style={{ marginLeft: 'auto', fontSize: 12, alignSelf: 'center' }}>{cr(m.tokens)} credits</span>}
             </div>}
-            {m.sources?.map((s, j) => open === `${i}:${j + 1}` && <div className="excerpt-box" key={j}>
-              <div className="eyebrow" style={{ marginBottom: 6 }}>Source {j + 1} · {where(s)}</div>{s.text}
+            {m.sources?.map((s, j) => open === `${i}:${j + 1}` && <div className="excerpt-box" key={j} style={s.file ? { maxHeight: 'none', whiteSpace: 'normal' } : undefined}>
+              <div className="eyebrow" style={{ marginBottom: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <span>Source {j + 1} · {where(s)}{s.topic && ` · topic: ${s.topic}`}</span>
+                {s.file && <a href={`/api/notes/${s.noteId}/file${s.page ? '#page=' + (s.atPage || s.page) : ''}`} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto' }}>Open in new tab ↗</a>}
+              </div>
+              {s.file && (s.source === 'image'
+                ? <img src={`/api/notes/${s.noteId}/file`} alt={`Uploaded image: ${s.noteTitle}`} style={{ maxWidth: '100%', borderRadius: 8, marginTop: 8 }} />
+                : <iframe className="pagebox" src={`/api/notes/${s.noteId}/file#page=${s.atPage || s.page || 1}&view=FitH`} title={`${s.noteTitle}, page ${s.page}`} />)}
+              {s.file ? <details style={{ marginTop: 8 }}><summary>Extracted text</summary><p style={{ whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>{s.text}</p></details> : s.text}
             </div>)}
           </div>)}
 
@@ -142,7 +189,9 @@ export default function Chat({ setCredits }) {
         placeholder={`Ask about ${subject}…`} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(draft); } }} />
       <button disabled={busy || !draft.trim()}>{busy ? 'Thinking…' : 'Ask'}</button>
     </form>
-    <p className="muted" style={{ fontSize: 12, textAlign: 'center', margin: '8px 0 0' }}>Enter to send · Shift+Enter for a new line · uses tokens only when your notes have an answer</p>
+    <p className="muted" style={{ fontSize: 12, textAlign: 'center', margin: '8px 0 0' }}>Enter to send · Shift+Enter for a new line · uses credits only when your notes have an answer</p>
+    </div>
+    </div>
   </>;
 }
 

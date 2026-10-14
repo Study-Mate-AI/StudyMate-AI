@@ -141,17 +141,20 @@ export function clean(raw, rand = Math.random) {
 // A topic is weak when its last 3 attempts average under 70%, so improving clears the flag.
 export function analyze(rows) {
   const mean = a => a.reduce((t, x) => t + x, 0) / a.length;
-  const sum = (a, k) => a.reduce((t, r) => t + r[k], 0);
+  const sum = (a, k) => a.reduce((t, r) => t + (r[k] || 0), 0);
+  // secs: time from quiz generated to submitted (first attempt) or the test-room timer (retakes); 0 = unknown.
+  const avgSecs = a => { const t = a.filter(r => r.secs > 0); return t.length ? Math.round(sum(t, 'secs') / t.length) : 0; };
   const acc = a => ({ attempts: a.length, accuracy: sum(a, 'total') ? sum(a, 'score') / sum(a, 'total') : 0 });
   const rated = rows.map(r => ({ ...r, pct: r.total ? r.score / r.total : 0 }));
   const groups = Object.values(Object.groupBy(rated, r => r.subject + '\u0000' + r.topic));
   const topics = groups.map(a => {
     const pcts = a.map(r => r.pct), recent = mean(pcts.slice(-3));
-    return { subject: a[0].subject, topic: a[0].topic, attempts: a.length, avg: mean(pcts), recent,
+    return { subject: a[0].subject, topic: a[0].topic, attempts: a.length, avg: mean(pcts), recent, avgSecs: avgSecs(a),
       last: pcts.at(-1), change: pcts.length > 1 ? pcts.at(-1) - pcts[0] : 0, lastAt: a.at(-1).at, weak: recent < 0.7 };
   }).sort((a, b) => a.recent - b.recent);
   return {
-    totals: { ...acc(rated), questions: sum(rated, 'total'), correct: sum(rated, 'score') },
+    totals: { ...acc(rated), questions: sum(rated, 'total'), correct: sum(rated, 'score'), avgSecs: avgSecs(rated),
+      secsPerQuestion: sum(rated.filter(r => r.secs > 0), 'total') ? Math.round(sum(rated.filter(r => r.secs > 0), 'secs') / sum(rated.filter(r => r.secs > 0), 'total')) : 0 },
     byDifficulty: Object.fromEntries(['Easy', 'Medium', 'Hard'].map(d => [d, acc(rated.filter(r => r.difficulty === d))])),
     topics,
     trend: rated.slice(-30),
@@ -171,13 +174,36 @@ export function grade(questions, answers) {
 // Deducts actual token usage, clamped at 0 in one atomic update, and logs it to the wallet ledger.
 // Embedding calls aren't charged (the API returns no usage for them).
 // ponytail: add a flat indexing fee if uploads get abused.
-export async function charge(db, userId, tokens, kind) {
+// meta ({ title, subject, difficulty }) labels the row in the usage history. Every query is logged, even a free one
+// (an answer that wasn't in the notes), so query counts are complete. If the balance is smaller than the cost, the
+// answer is still delivered and the balance just stops at 0.
+export async function charge(db, userId, tokens, kind, meta = {}) {
   const before = await db.collection('users').findOneAndUpdate(
     { _id: userId },
     [{ $set: { credits: { $max: [0, { $subtract: ['$credits', tokens] }] } } }],
     { returnDocument: 'before', projection: { credits: 1 } },
   );
   const spent = Math.min(before?.credits ?? 0, tokens);
-  if (spent) await db.collection('ledger').insertOne({ userId, kind, delta: -spent, at: new Date() });
+  await db.collection('ledger').insertOne({ userId, kind, delta: -spent, at: new Date(), ...meta });
   return (before?.credits ?? 0) - spent;
 }
+
+// Contents index for a paged file (PDF pages, slides): each page's heading is its first short line, skipping running
+// headers/footers that repeat on many pages. A topic runs until the next heading: [{ title, from, to }].
+export function topicsOf(pages) {
+  const lines = pages.map(p => p.split('\n').map(l => l.trim()).filter(l => l.length >= 3 && l.length <= 80 && !/^[\d\s.,:\-–|/]+$/.test(l)));
+  const freq = {};
+  lines.forEach(ls => new Set(ls.slice(0, 3)).forEach(l => { freq[l] = (freq[l] || 0) + 1; }));
+  const out = [];
+  lines.forEach((ls, i) => {
+    const title = ls.find(l => pages.length < 4 || freq[l] <= pages.length * 0.6);
+    if (title && title !== out.at(-1)?.title) out.push({ title, from: i + 1 });
+  });
+  return out.map((t, k) => ({ ...t, to: (out[k + 1]?.from ?? pages.length + 1) - 1 }));
+}
+
+export const cosine = (a, b) => {
+  let d = 0, x = 0, y = 0;
+  for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; }
+  return d / Math.sqrt(x * y);
+};

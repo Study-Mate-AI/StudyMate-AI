@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, useSubjects, hueOf, ago } from '../App.jsx';
+import { api, useSubjects, hueOf, cr } from '../App.jsx';
 
 const pct = x => Math.round(x * 100) + '%';
+// 75 → "1m 15s"; 0/undefined → "—" (time unknown)
+export const dur = s => !s ? '—' : s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`;
 const practice = t => `/quiz?subject=${encodeURIComponent(t.subject)}&topic=${encodeURIComponent(t.topic)}&difficulty=${t.recent < 0.5 ? 'Easy' : 'Medium'}`;
 
 const css = `
@@ -47,6 +49,7 @@ export default function Dashboard() {
         <div><div className="eyebrow">Quizzes taken</div><div className="num">{totals.attempts}</div><div className="muted" style={{ fontSize: 13 }}>{topics.length} topic{topics.length === 1 ? '' : 's'}</div></div>
         <div><div className="eyebrow">Questions</div><div className="num">{totals.correct}<span className="muted" style={{ fontSize: 18 }}>/{totals.questions}</span></div><div className="muted" style={{ fontSize: 13 }}>answered correctly</div></div>
         <div><div className="eyebrow">Weak topics</div><div className="num" style={{ color: weak.length ? 'var(--bad)' : 'var(--good)' }}>{weak.length}</div><div className="muted" style={{ fontSize: 13 }}>{weak.length ? 'need revision' : 'all on track'}</div></div>
+        <div><div className="eyebrow">Time per quiz</div><div className="num">{dur(totals.avgSecs)}</div><div className="muted" style={{ fontSize: 13 }}>{totals.secsPerQuestion ? `about ${dur(totals.secsPerQuestion)} per question` : 'generated → submitted'}</div></div>
       </div>
 
       {trend.length > 1 && <section className="card rise">
@@ -85,7 +88,7 @@ export default function Dashboard() {
       <section className="card rise">
         <h3 style={{ margin: '0 0 14px', fontSize: 16 }}>All topics</h3>
         <table>
-          <thead><tr><th>Topic</th><th style={{ textAlign: 'right' }}>Avg</th><th style={{ textAlign: 'right' }}>Last 3</th><th className="hide-sm" style={{ textAlign: 'right' }}>Change</th><th style={{ textAlign: 'right' }}>Status</th></tr></thead>
+          <thead><tr><th>Topic</th><th style={{ textAlign: 'right' }}>Avg</th><th style={{ textAlign: 'right' }}>Last 3</th><th className="hide-sm" style={{ textAlign: 'right' }}>Change</th><th className="hide-sm" style={{ textAlign: 'right' }}>Avg time</th><th style={{ textAlign: 'right' }}>Status</th></tr></thead>
           <tbody>{topics.map(t => <tr key={t.subject + t.topic} className="tint" style={tint(t.subject)}>
             <td>
               {t.topic}
@@ -96,21 +99,83 @@ export default function Dashboard() {
             <td className="num hide-sm" style={{ textAlign: 'right', color: t.change > 0 ? 'var(--good)' : t.change < 0 ? 'var(--bad)' : 'var(--ink-3)' }}>
               {t.attempts < 2 ? '—' : `${t.change > 0 ? '▲' : t.change < 0 ? '▼' : ''} ${Math.abs(Math.round(t.change * 100))}`}
             </td>
+            <td className="num hide-sm" style={{ textAlign: 'right' }}>{dur(t.avgSecs)}</td>
             <td style={{ textAlign: 'right' }}>{t.weak ? <span className="status bad">⚑ Weak</span> : <span className="status good">✓ On track</span>}</td>
           </tr>)}</tbody>
         </table>
       </section>
 
-      <section className="card rise">
-        <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Recent attempts</h3>
-        <table><tbody>{trend.slice(-5).reverse().map((a, i) => <tr key={i}>
-          <td><Link to={'/quiz/' + a.quizId} viewTransition style={{ color: 'var(--ink)' }}>{a.topic}</Link> <span className="muted" style={{ fontSize: 13 }}>· {a.difficulty}</span></td>
-          <td className="muted" style={{ fontSize: 13 }} title={new Date(a.at).toLocaleString()}>{ago(a.at)}</td>
-          <td className="num" style={{ textAlign: 'right', color: a.pct < 0.7 ? 'var(--bad)' : 'var(--good)' }}>{a.score}/{a.total}</td>
-        </tr>)}</tbody></table>
-      </section>
     </>}
+    <History />
   </>;
+}
+
+const RANGES = { all: 0, today: 1, week: 7, month: 30 };
+const hcss = `
+.hfilters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.hfilters input[type=search] { flex: 1 1 220px; min-width: 0; }
+.htable { width: 100%; font-size: 14px; }
+.htable td { vertical-align: top; padding: 10px 8px 10px 0; }
+.htable .ttl { max-width: 360px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.type { font: 600 10.5px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; padding: 4px 7px; border-radius: 5px; white-space: nowrap; }
+.type.tutor { background: var(--accent-soft); color: var(--accent); } .type.quiz { background: var(--warn-soft); color: var(--warn); } .type.upload { background: var(--line); color: var(--ink-2); }
+.hwrap { overflow-x: auto; }
+@media (max-width: 640px) { .htable .hide-xs { display: none; } }
+`;
+
+// Every tutor question and quiz in one table: search by text, filter by type, difficulty, subject and date.
+function History() {
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState('');
+  const [type, setType] = useState('all');
+  const [diff, setDiff] = useState('all');
+  const [subject, setSubject] = useState('all');
+  const [range, setRange] = useState('all');
+  const [shown, setShown] = useState(25);
+  useEffect(() => { api('/history').then(setRows, () => setRows([])); }, []);
+  if (!rows) return null;
+
+  const since = RANGES[range] && Date.now() - RANGES[range] * 864e5;
+  const needle = q.trim().toLowerCase();
+  const list = rows.filter(r => (type === 'all' || r.type === type) && (diff === 'all' || r.difficulty === diff) && (subject === 'all' || r.subject === subject)
+    && (!since || new Date(r.at) >= since) && (!needle || `${r.title} ${r.subject ?? ''}`.toLowerCase().includes(needle)));
+  const subjects = [...new Set(rows.map(r => r.subject).filter(Boolean))].sort();
+  const counts = { tutor: rows.filter(r => r.type === 'tutor').length, quiz: rows.filter(r => r.type === 'quiz').length };
+  const sel = (value, set, opts, label) => <select value={value} onChange={e => { set(e.target.value); setShown(25); }} aria-label={label}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>;
+
+  return <section className="card rise">
+    <style>{hcss}</style>
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+      <h3 style={{ margin: 0, fontSize: 16 }}>History</h3>
+      <span className="muted" style={{ fontSize: 13 }}>{counts.tutor} tutor question{counts.tutor === 1 ? '' : 's'} · {counts.quiz} quiz attempt{counts.quiz === 1 ? '' : 's'}</span>
+    </div>
+    <div className="hfilters">
+      <input type="search" value={q} onChange={e => { setQ(e.target.value); setShown(25); }} placeholder="Search questions and topics…" aria-label="Search history" />
+      {sel(type, setType, [['all', 'All types'], ['tutor', 'Tutor'], ['quiz', 'Quiz'], ['upload', 'File reads']], 'Type')}
+      {sel(diff, setDiff, [['all', 'Any difficulty'], ['Easy', 'Easy'], ['Medium', 'Medium'], ['Hard', 'Hard']], 'Difficulty')}
+      {subjects.length > 1 && sel(subject, setSubject, [['all', 'All subjects'], ...subjects.map(s => [s, s])], 'Subject')}
+      {sel(range, setRange, [['all', 'All time'], ['today', 'Today'], ['week', 'Last 7 days'], ['month', 'Last 30 days']], 'Date')}
+    </div>
+    {!list.length ? <p className="muted" style={{ margin: 0 }}>{rows.length ? 'Nothing matches these filters.' : 'Ask the tutor or take a quiz and it shows up here.'}</p> : <div className="hwrap">
+      <table className="htable">
+        <thead><tr><th>Type</th><th>Question / topic</th><th className="hide-xs">Subject</th><th>Details</th><th className="hide-xs">Time taken</th><th style={{ textAlign: 'right' }}>Credits</th><th style={{ textAlign: 'right' }}>When</th></tr></thead>
+        <tbody>{list.slice(0, shown).map((r, i) => <tr key={i}>
+          <td><span className={'type ' + r.type}>{r.type === 'upload' ? 'File' : r.type}</span></td>
+          <td><div className="ttl" title={r.title}>{r.type === 'quiz' ? <Link to={'/quiz/' + r.quizId} viewTransition style={{ color: 'var(--ink)' }}>{r.title}</Link> : r.title}</div></td>
+          <td className="muted hide-xs">{r.subject || '—'}</td>
+          <td style={{ whiteSpace: 'nowrap' }}>{r.type === 'quiz'
+            ? <>{r.difficulty} · {r.score == null ? <span className="muted">not taken</span> : <span className="num" style={{ color: r.score / r.total < 0.7 ? 'var(--bad)' : 'var(--good)' }}>{r.score}/{r.total}</span>}</>
+            : <span className="muted">—</span>}</td>
+          <td className="num hide-xs">{r.type === 'quiz' ? dur(r.secs) : '—'}</td>
+          <td className="num" style={{ textAlign: 'right' }}>{r.tokens ? cr(r.tokens) : <span className="muted">0</span>}</td>
+          <td className="muted" style={{ textAlign: 'right', whiteSpace: 'nowrap', fontSize: 13 }} title={new Date(r.at).toLocaleString()}>
+            {new Date(r.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · {new Date(r.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+          </td>
+        </tr>)}</tbody>
+      </table>
+      {list.length > shown && <button className="ghost" onClick={() => setShown(shown + 50)} style={{ marginTop: 10 }}>Show more ({list.length - shown})</button>}
+    </div>}
+  </section>;
 }
 
 // ponytail: hand-rolled SVG line chart, swap in Recharts if the dashboard grows more charts
