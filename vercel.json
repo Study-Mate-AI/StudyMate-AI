@@ -1,0 +1,10 @@
+{
+  "installCommand": "cd client && npm ci --include=dev && cd ../server && npm ci",
+  "buildCommand": "cd client && npm run build",
+  "outputDirectory": "client/dist",
+  "functions": { "api/index.mjs": { "maxDuration": 60 } },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.mjs" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

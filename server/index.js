@@ -474,4 +474,5 @@ app.use((err, req, res, next) => {
     return bad(res, 'The AI is busy right now. Please try again in a minute.', 503);
   bad(res, 'Server error', 500);
 });
-app.listen(PORT, () => console.log(`StudyMate API on :${PORT}`));
+if (!process.env.VERCEL) app.listen(PORT, () => console.log(`StudyMate API on :${PORT}`)); // Vercel calls the exported app
+export default app;
