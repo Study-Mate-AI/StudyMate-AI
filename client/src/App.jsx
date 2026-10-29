@@ -16,7 +16,8 @@ export const AVG = { chat: 300, quiz: 900 };
 export const left = (balance, avg = AVG.chat) => Math.floor((balance || 0) / Math.max(avg, 1));
 // The name the user set in Settings → Profile, else the part of the email before @.
 // First name for the sidebar (from Settings → Profile / signup), else the part of the email before @.
-export const Logo = () => <span className="logo"><img src="/icon.svg" alt="" />StudyMate <b>AI</b></span>;
+const BOOT_MS = 5000; // minimum loader time so the logo animation plays through
+export const Logo =() => <span className="logo"><img src="/icon.svg" alt="" />StudyMate <b>AI</b></span>;
 export const nameOf = u => u.profile?.name?.split(' ')[0] || u.email.split('@')[0];
 export const LOW = 300; // tokens (3 credits ≈ 1 question): show the low-balance warning below this
 
@@ -156,7 +157,11 @@ export default function App() {
   const toggle = () => setCollapsed(c => { try { localStorage.sidebar = c ? 'open' : 'collapsed'; } catch {} return !c; });
   const refresh = () => api('/me').then(setUser, () => setUser(null));
   useEffect(() => { refresh(); }, []);
-  useEffect(() => { if (user !== undefined) document.getElementById('boot')?.classList.add('done'); }, [user]); // fade out the index.html loader
+  useEffect(() => { // fade out the index.html loader once the session is known, but show it for at least BOOT_MS from page start
+    if (user === undefined) return;
+    const t = setTimeout(() => document.getElementById('boot')?.classList.add('done'), BOOT_MS - performance.now());
+    return () => clearTimeout(t);
+  }, [user]);
   useEffect(() => {
     const on = () => { setEmpty(true); setLow(false); setUser(u => u && { ...u, credits: 0 }); };
     window.addEventListener('credits:empty', on);
