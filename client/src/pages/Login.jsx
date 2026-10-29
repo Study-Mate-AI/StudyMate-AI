@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, GoogleButton, ThemeToggle } from '../App.jsx';
+import { api, GoogleButton, Logo, ThemeToggle } from '../App.jsx';
 
 const css = `
 .auth { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
@@ -82,7 +82,7 @@ export default function Login({ onLogin }) {
   return <div className="auth">
     <style>{css}</style>
     <section className="auth-hero">
-      <Link to="/" className="brand" style={{ fontFamily: 'var(--serif)', fontSize: 24, color: 'var(--ink)', textDecoration: 'none' }}>StudyMate</Link>
+      <Link to="/" className="brand" style={{ fontFamily: 'var(--serif)', fontSize: 24, color: 'var(--ink)', textDecoration: 'none' }}><Logo /></Link>
       <div>
         <h1>Study from <em>your own</em> notes.</h1>
         <p style={{ color: 'var(--ink-2)', fontSize: 17, maxWidth: '44ch', margin: '18px 0 0' }}>

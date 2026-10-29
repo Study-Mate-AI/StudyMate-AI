@@ -16,6 +16,7 @@ export const AVG = { chat: 300, quiz: 900 };
 export const left = (balance, avg = AVG.chat) => Math.floor((balance || 0) / Math.max(avg, 1));
 // The name the user set in Settings → Profile, else the part of the email before @.
 // First name for the sidebar (from Settings → Profile / signup), else the part of the email before @.
+export const Logo = () => <span className="logo"><img src="/icon.svg" alt="" />StudyMate <b>AI</b></span>;
 export const nameOf = u => u.profile?.name?.split(' ')[0] || u.email.split('@')[0];
 export const LOW = 300; // tokens (3 credits ≈ 1 question): show the low-balance warning below this
 
@@ -155,6 +156,7 @@ export default function App() {
   const toggle = () => setCollapsed(c => { try { localStorage.sidebar = c ? 'open' : 'collapsed'; } catch {} return !c; });
   const refresh = () => api('/me').then(setUser, () => setUser(null));
   useEffect(() => { refresh(); }, []);
+  useEffect(() => { if (user !== undefined) document.getElementById('boot')?.classList.add('done'); }, [user]); // fade out the index.html loader
   useEffect(() => {
     const on = () => { setEmpty(true); setLow(false); setUser(u => u && { ...u, credits: 0 }); };
     window.addEventListener('credits:empty', on);
@@ -184,7 +186,7 @@ export default function App() {
     <style>{sbCss}</style>
     <aside className="sb" aria-label="Main navigation">
       <div className="sb-top">
-        <Link to="/notes" className="sb-brand" onClick={() => setOpen(false)}>StudyMate</Link>
+        <Link to="/notes" className="sb-brand" onClick={() => setOpen(false)}><Logo /></Link>
         <button className="sb-icon collapse-btn" onClick={toggle} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
           <Ico d={I.panel} />
         </button>
@@ -205,7 +207,7 @@ export default function App() {
     <div className="page">
       <div className="topbar">
         <button className="sb-icon" onClick={() => setOpen(true)} aria-label="Open menu"><Ico d={I.menu} /></button>
-        <span className="sb-brand">StudyMate</span>
+        <span className="sb-brand"><Logo /></span>
         <Link to="/wallet" className="muted" style={{ fontSize: 13, textDecoration: 'none' }}><span className="num" style={{ color: 'var(--ink)' }}>{cr(user.credits)}</span> credits</Link>
       </div>
       {empty && <div role="alert" className="alert-bar rise" style={{ background: 'var(--warn-soft)', color: 'var(--bad)' }}>

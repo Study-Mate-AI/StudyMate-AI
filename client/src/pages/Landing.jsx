@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, cr, GoogleButton, ThemeToggle, useTween } from '../App.jsx';
+import { api, cr, GoogleButton, Logo, ThemeToggle, useTween } from '../App.jsx';
 
 // Defaults match server/billing.js; the real values come from /api/plans (the same settings Razorpay checkout uses).
 const PLANS = { prices: { pack: 399, pro: 749 }, tokens: { signup: 500, pack: 50000, pro: 200000 } };
@@ -234,7 +234,7 @@ export default function Landing({ onLogin }) {
   return <div className="lp">
     <style>{css}</style>
     <nav className={'lp-nav' + (scrolled ? ' scrolled' : '')}>
-      <Link to="/" className="brand">StudyMate</Link>
+      <Link to="/" className="brand"><Logo /></Link>
       <div className="links"><a href="#features">Features</a><a href="#how">How it works</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a></div>
       <div className="right">
         <ThemeToggle />
@@ -343,6 +343,6 @@ export default function Landing({ onLogin }) {
       </div>
     </section>
 
-    <footer><span className="serif" style={{ fontSize: 18, color: 'var(--ink)' }}>StudyMate</span><span>B.Tech project · Built with MongoDB, Express, React, Node and Google Gemini</span></footer>
+    <footer><span style={{ fontSize: 18 }}><Logo /></span><span>B.Tech project · Built with MongoDB, Express, React, Node and Google Gemini</span></footer>
   </div>;
 }

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>StudyMate AI</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
@@ -91,6 +92,26 @@
     ::view-transition-new(root) { animation: .32s var(--ease) both vt-in; }
     @keyframes vt-out { to { opacity: 0; } }
     @keyframes vt-in { from { opacity: 0; transform: translateY(6px); } }
+    /* Brand: icon + "StudyMate AI" wordmark, sized by the parent's font-size. */
+    .logo { display: inline-flex; align-items: center; gap: .4em; font: 600 .85em/1 var(--sans); letter-spacing: -.02em; color: var(--ink); white-space: nowrap; }
+    .logo img { width: 1.35em; height: 1.35em; }
+    .logo b { font-weight: inherit; color: light-dark(#4F46E5, #8f8aff); }
+
+    /* Boot loader: the icon assembles (tile → book opens → stem grows → nodes pop), then nodes pulse until the app is ready. */
+    #boot { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--paper); transition: opacity .35s var(--ease), visibility .35s; }
+    #boot.done { opacity: 0; visibility: hidden; }
+    #boot svg { width: 88px; height: 88px; overflow: visible; }
+    #boot .tile { transform-origin: center; animation: b-tile .5s var(--ease) both; }
+    #boot .pl, #boot .pr { transform-origin: 32px 44px; animation: b-open .55s .35s var(--ease) both; }
+    #boot .ln { stroke-dasharray: 1; animation: b-draw .4s var(--ease) both; }
+    #boot .stem { animation-delay: .75s; } #boot .br { animation-delay: 1.1s; }
+    #boot .nd { transform-box: fill-box; transform-origin: center; animation: b-pop .35s var(--ease) both, b-pulse 1.4s 1.8s ease-in-out infinite; }
+    #boot .n0 { animation-delay: 1s, 1.8s; } #boot .n1 { animation-delay: 1.4s, 2s; } #boot .n2 { animation-delay: 1.5s, 2.2s; }
+    @keyframes b-tile { from { opacity: 0; transform: scale(.6) rotate(-8deg); } }
+    @keyframes b-open { from { opacity: 0; transform: scaleX(0); } }
+    @keyframes b-draw { from { stroke-dashoffset: 1; } }
+    @keyframes b-pop { from { transform: scale(0); } 70% { transform: scale(1.3); } }
+    @keyframes b-pulse { 50% { transform: scale(1.25); } }
     @media (prefers-reduced-motion: reduce) {
       *, ::view-transition-old(root), ::view-transition-new(root) { animation: none !important; transition: none !important; }
     }
@@ -100,6 +121,18 @@
 </head>
 <body>
   <script>try { const t = localStorage.theme; if (t) document.documentElement.dataset.theme = t; } catch {}</script>
+  <div id="boot" role="status" aria-label="Loading StudyMate AI">
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <rect class="tile" width="64" height="64" rx="15" fill="#4F46E5"/>
+      <g stroke="#2DD4BF" stroke-width="2.6" stroke-linecap="round" fill="none">
+        <path class="ln stem" pathLength="1" d="M32 37V14"/>
+        <path class="ln br" pathLength="1" d="M32 14 18 23"/><path class="ln br" pathLength="1" d="M32 14 46 23"/>
+      </g>
+      <g fill="#2DD4BF"><circle class="nd n0" cx="32" cy="14" r="4.6"/><circle class="nd n1" cx="18" cy="23" r="3.6"/><circle class="nd n2" cx="46" cy="23" r="3.6"/></g>
+      <path class="pl" fill="#fff" d="M31 37C25 33.5 18.5 33.5 12 35.5V52C18.5 50 25 50.5 31 54Z"/>
+      <path class="pr" fill="#fff" d="M33 37C39 33.5 45.5 33.5 52 35.5V52C45.5 50 39 50.5 33 54Z"/>
+    </svg>
+  </div>
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
 </body>
